@@ -7,3 +7,4 @@ scikit-learn
 imbalanced-learn
 joblib
 ydata-profiling
+torch
