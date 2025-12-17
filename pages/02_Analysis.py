@@ -7,7 +7,8 @@ from nltk.tag import pos_tag
 from nltk.chunk import ne_chunk
 from sklearn.feature_extraction.text import TfidfVectorizer
 import string
-import heapq # Untuk mengambil N elemen terbesar dari list
+import heapq 
+import os 
 
 st.set_page_config(layout="wide", page_title="ESG Analysis")
 st.title("ESG Analysis Page")
@@ -18,26 +19,30 @@ st.markdown("---")
 @st.cache_resource
 def download_nltk_data_for_analysis():
     """Mengunduh data NLTK yang diperlukan untuk analisis (cached)."""
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        nltk.download('punkt')
-    try:
-        nltk.data.find('corpora/stopwords')
-    except LookupError:
-        nltk.download('stopwords')
-    try:
-        nltk.data.find('taggers/averaged_perceptron_tagger')
-    except LookupError:
-        nltk.download('averaged_perceptron_tagger')
-    try:
-        nltk.data.find('chunkers/maxent_ne_chunker')
-    except LookupError:
-        nltk.download('maxent_ne_chunker')
-    try:
-        nltk.data.find('corpora/words') # Diperlukan oleh maxent_ne_chunker
-    except LookupError:
-        nltk.download('words')
+    # Definisikan jalur data NLTK kustom untuk Streamlit Cloud
+    nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
+    os.makedirs(nltk_data_dir, exist_ok=True)
+
+    # List of NLTK resources to download
+    resources = {
+        'punkt': 'tokenizers/punkt',
+        'stopwords': 'corpora/stopwords',
+        'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
+        'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
+        'words': 'corpora/words', # Diperlukan oleh maxent_ne_chunker
+    }
+
+    for resource_name, resource_path in resources.items():
+        try:
+            # Coba temukan sumber daya terlebih dahulu di jalur kustom kita
+            nltk.data.find(resource_path, paths=[nltk_data_dir])
+        except LookupError:
+            # Jika tidak ditemukan, unduh ke jalur kustom kita
+            st.info(f"Downloading NLTK resource: {resource_name} (for 02_Analysis.py)...")
+            nltk.download(resource_name, download_dir=nltk_data_dir)
+            st.success(f"Successfully downloaded {resource_name} (for 02_Analysis.py).")
 
 download_nltk_data_for_analysis()
 
@@ -45,8 +50,13 @@ download_nltk_data_for_analysis()
 def summarize_text_tfidf(text, num_sentences=5):
     if not text or len(text.strip()) == 0:
         return "Tidak ada konten untuk diringkas."
+    try:
+        # Coba sent_tokenize, jika gagal berarti model bahasa Indonesia belum dimuat
+        sentences = sent_tokenize(text, language='indonesian')
+    except LookupError:
+        st.error("NLTK Punkt tokenizer untuk Bahasa Indonesia tidak tersedia. Pastikan 'punkt' diunduh dengan benar.")
+        return "Gagal meringkas: NLTK Punkt tokenizer untuk Bahasa Indonesia tidak ditemukan."
 
-    sentences = sent_tokenize(text, language='indonesian')
     if len(sentences) <= num_sentences:
         return text # Jika teks pendek, kembalikan seluruh teks
 
@@ -55,6 +65,7 @@ def summarize_text_tfidf(text, num_sentences=5):
     
     def preprocess(sentence):
         words = word_tokenize(sentence.lower(), language='indonesian')
+        # Filter kata-kata non-alfanumerik dan stopwords
         return [word for word in words if word.isalnum() and word not in stop_words_id]
 
     # Buat TF-IDF Vectorizer
@@ -63,13 +74,14 @@ def summarize_text_tfidf(text, num_sentences=5):
     
     try:
         tfidf_matrix = vectorizer.fit_transform(sentences)
-    except ValueError: # Handle empty vocabulary if text is too short or all stopwords
+    except ValueError: # Tangani kosakata kosong jika teks terlalu pendek atau semua stopwords
         return "Tidak dapat meringkas. Konten mungkin terlalu pendek atau tidak relevan."
 
     # Hitung skor untuk setiap kalimat
     sentence_scores = {}
     for i, sentence in enumerate(sentences):
-        score = tfidf_matrix[i].sum() # Jumlahkan skor TF-IDF kata-kata dalam kalimat
+        # Jumlahkan skor TF-IDF kata-kata dalam kalimat
+        score = tfidf_matrix[i].sum() 
         sentence_scores[sentence] = score
 
     # Ambil N kalimat teratas
@@ -88,11 +100,13 @@ def perform_ner_nltk(text):
     tagged_words = pos_tag(words)
 
     # Named Entity Chunking
+    # Catatan: ne_chunk NLTK primernya dilatih untuk Bahasa Inggris.
+    # Akurasi untuk Bahasa Indonesia mungkin terbatas.
     named_entities = []
-    tree = ne_chunk(tagged_words)
+    tree = ne_chunk(tagged_words) 
 
     for subtree in tree.subtrees():
-        if subtree.label() != 'S': # 'S' adalah label untuk kalimat
+        if hasattr(subtree, 'label') and subtree.label() != 'S': # 'S' adalah label untuk kalimat root
             entity_type = subtree.label()
             entity_name = " ".join([word for word, tag in subtree.leaves()])
             named_entities.append((entity_name, entity_type))
@@ -130,10 +144,12 @@ if st.session_state.crawled_data and st.session_state.final_esg_category:
 
     # --- NLTK NER ---
     st.subheader("Named Entity Recognition (NER) dengan NLTK")
+    st.warning("Catatan: NLTK's `ne_chunk` primernya dilatih untuk Bahasa Inggris. Akurasi untuk Bahasa Indonesia mungkin terbatas.")
     with st.spinner("Mengekstrak entitas nama..."):
         entities = perform_ner_nltk(crawled_content)
     
     if entities:
+        import pandas as pd # Impor pandas di sini karena hanya digunakan jika ada entitas
         entity_df = pd.DataFrame(entities, columns=['Entity', 'Type'])
         st.dataframe(entity_df)
     else:
@@ -150,3 +166,4 @@ if st.session_state.crawled_data and st.session_state.final_esg_category:
 else:
     st.warning("Tidak ada data artikel yang tersedia untuk analisis. Silakan kembali ke halaman utama untuk melakukan screening terlebih dahulu.")
     st.info("Gunakan sidebar di kiri untuk navigasi.")
+
