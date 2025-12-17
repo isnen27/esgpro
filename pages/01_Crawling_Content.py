@@ -1,3 +1,5 @@
+# app.py (Pastikan bagian ini sudah seperti ini)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -25,7 +27,6 @@ if 'crawled_url' not in st.session_state:
 @st.cache_resource
 def download_nltk_data():
     """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada)."""
-    # Definisikan jalur data NLTK kustom untuk Streamlit Cloud
     nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
     if nltk_data_dir not in nltk.data.path:
         nltk.data.path.append(nltk_data_dir)
@@ -38,11 +39,9 @@ def download_nltk_data():
 
     for resource_name, resource_path in resources.items():
         try:
-            # Coba temukan sumber daya terlebih dahulu di jalur kustom kita
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
-            # Jika tidak ditemukan, unduh ke jalur kustom kita
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # Tambahkan quiet=True
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # quiet=True ditambahkan
 
 download_nltk_data()
 
