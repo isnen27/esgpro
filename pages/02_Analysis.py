@@ -23,38 +23,48 @@ st.set_page_config(
 )
 
 # --- NLTK Data Download (Programmatic and Cached) ---
+# Definisikan jalur kustom untuk data NLTK di dalam direktori aplikasi
+NLTK_DATA_PATH = "./nltk_data"
+# Tambahkan jalur ini ke jalur pencarian data NLTK
+nltk.data.path.append(NLTK_DATA_PATH)
+
 @st.cache_resource
 def load_nltk_data():
     """
-    Downloads NLTK data (punkt and stopwords) if not already present.
-    This function is cached to run only once.
+    Downloads NLTK data (punkt and stopwords) to a specified directory
+    if not already present. This function is cached to run only once.
     """
-    with st.spinner("Memastikan data NLTK tersedia..."):
-        # Coba temukan 'punkt'. Jika tidak ada, unduh.
+    # Pastikan direktori data NLTK kustom ada
+    os.makedirs(NLTK_DATA_PATH, exist_ok=True)
+
+    with st.spinner(f"Memastikan data NLTK tersedia di {NLTK_DATA_PATH}..."):
+        # Periksa dan unduh 'punkt'
         try:
-            nltk.data.find('tokenizers/punkt')
-            # st.info("NLTK 'punkt' data sudah ada.") # Bisa dihapus untuk mengurangi log
-        except LookupError: # Tangkap LookupError yang dikeluarkan oleh nltk.data.find()
+            # Secara eksplisit periksa di jalur kustom kita
+            nltk.data.find('tokenizers/punkt', path=[NLTK_DATA_PATH]) 
+            st.success("NLTK 'punkt' data sudah ada.")
+        except LookupError:
             st.warning("NLTK 'punkt' data tidak ditemukan. Mengunduh...")
             try:
-                nltk.download('punkt')
+                nltk.download('punkt', download_dir=NLTK_DATA_PATH)
                 st.success("NLTK 'punkt' data berhasil diunduh.")
             except Exception as e:
                 st.error(f"Gagal mengunduh NLTK 'punkt' data: {e}")
-                st.stop() # Hentikan aplikasi jika pengunduhan penting gagal
+                st.stop()
         
-        # Coba temukan 'stopwords'. Jika tidak ada, unduh.
+        # Periksa dan unduh 'stopwords'
         try:
-            nltk.data.find('corpora/stopwords')
-            # st.info("NLTK 'stopwords' data sudah ada.") # Bisa dihapus untuk mengurangi log
-        except LookupError: # Tangkap LookupError yang dikeluarkan oleh nltk.data.find()
+            # Secara eksplisit periksa di jalur kustom kita
+            nltk.data.find('corpora/stopwords', path=[NLTK_DATA_PATH]) 
+            st.success("NLTK 'stopwords' data sudah ada.")
+        except LookupError:
             st.warning("NLTK 'stopwords' data tidak ditemukan. Mengunduh...")
             try:
-                nltk.download('stopwords')
+                nltk.download('stopwords', download_dir=NLTK_DATA_PATH)
                 st.success("NLTK 'stopwords' data berhasil diunduh.")
             except Exception as e:
                 st.error(f"Gagal mengunduh NLTK 'stopwords' data: {e}")
-                st.stop() # Hentikan aplikasi jika pengunduhan penting gagal
+                st.stop()
     st.success("Semua data NLTK siap!")
 
 # Panggil fungsi pengunduhan NLTK di awal aplikasi
