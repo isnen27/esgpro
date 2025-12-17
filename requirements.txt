@@ -18,5 +18,3 @@ transformers
 networkx
 pyvis
 einops
-heapq
-
