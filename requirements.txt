@@ -9,3 +9,5 @@ joblib
 ydata-profiling
 torch
 sentence-transformers
+nltk
+
