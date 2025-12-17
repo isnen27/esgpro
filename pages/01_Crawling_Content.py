@@ -14,8 +14,6 @@ import re
 st.set_page_config(layout="wide", page_title="ESG Screening Tool")
 
 # --- Inisialisasi Session State ---
-# Pastikan semua state yang akan digunakan di berbagai halaman diinisialisasi
-# Ini penting agar 02_Analysis.py bisa membaca data ini
 if 'crawled_data' not in st.session_state:
     st.session_state.crawled_data = None
 if 'final_esg_category' not in st.session_state:
