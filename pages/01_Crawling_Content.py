@@ -38,13 +38,12 @@ def download_nltk_data():
 
     for resource_name, resource_path in resources.items():
         try:
-            # Coba temukan sumber daya terlebih dahulu di jalur kustom kita
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
             # Jika tidak ditemukan, unduh ke jalur kustom kita
-            st.info(f"Downloading NLTK resource: {resource_name} (for app.py)...")
+            # st.info(f"Downloading NLTK resource: {resource_name} (for app.py)...") 
             nltk.download(resource_name, download_dir=nltk_data_dir)
-            st.success(f"Successfully downloaded {resource_name} (for app.py).")
+            # st.success(f"Successfully downloaded {resource_name} (for app.py).") 
 
 download_nltk_data()
 
