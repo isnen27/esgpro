@@ -24,15 +24,27 @@ if 'crawled_url' not in st.session_state:
 # --- 0️⃣ Download Data NLTK (WordNet) ---
 @st.cache_resource
 def download_nltk_data():
-    """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada."""
-    try:
-        nltk.data.find('corpora/wordnet')
-    except LookupError:
-        nltk.download('wordnet')
-    try:
-        nltk.data.find('corpora/omw-1.4')
-    except LookupError:
-        nltk.download('omw-1.4')
+    """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada)."""
+    # Definisikan jalur data NLTK kustom untuk Streamlit Cloud
+    nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
+    os.makedirs(nltk_data_dir, exist_ok=True)
+
+    resources = {
+        'wordnet': 'corpora/wordnet',
+        'omw-1.4': 'corpora/omw-1.4'
+    }
+
+    for resource_name, resource_path in resources.items():
+        try:
+            # Coba temukan sumber daya terlebih dahulu di jalur kustom kita
+            nltk.data.find(resource_path, paths=[nltk_data_dir])
+        except LookupError:
+            # Jika tidak ditemukan, unduh ke jalur kustom kita
+            st.info(f"Downloading NLTK resource: {resource_name} (for app.py)...")
+            nltk.download(resource_name, download_dir=nltk_data_dir)
+            st.success(f"Successfully downloaded {resource_name} (for app.py).")
 
 download_nltk_data()
 
