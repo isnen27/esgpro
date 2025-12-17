@@ -6,9 +6,9 @@ from sentence_transformers import SentenceTransformer, util
 import nltk
 from nltk.corpus import wordnet as wn
 import os
-import requests # Tambahan
-from bs4 import BeautifulSoup # Tambahan
-import re # Tambahan
+import requests
+from bs4 import BeautifulSoup
+import re
 
 # --- Konfigurasi Streamlit ---
 st.set_page_config(layout="wide", page_title="ESG Screening Tool")
@@ -468,7 +468,8 @@ if st.button("Crawl dan Lakukan Screening ESG"):
             st.success("Crawling berhasil!")
             st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
             st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
-            # st.expander("Lihat Isi Artikel Lengkap").write(crawled_data['crawled_content']) # Opsional: tampilkan konten lengkap
+            with st.expander("Lihat Isi Artikel Lengkap"): # Menampilkan konten lengkap dalam expander
+                st.write(crawled_data['crawled_content'])
 
             crawled_title_for_screening = crawled_data['crawled_title']
 
