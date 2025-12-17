@@ -13,3 +13,6 @@ nltk
 requests
 beautifulsoup4
 lxml
+transformers
+networkx
+pyvis
