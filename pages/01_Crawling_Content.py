@@ -38,12 +38,11 @@ def download_nltk_data():
 
     for resource_name, resource_path in resources.items():
         try:
+            # Coba temukan sumber daya terlebih dahulu di jalur kustom kita
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
             # Jika tidak ditemukan, unduh ke jalur kustom kita
-            # st.info(f"Downloading NLTK resource: {resource_name} (for app.py)...") 
-            nltk.download(resource_name, download_dir=nltk_data_dir)
-            # st.success(f"Successfully downloaded {resource_name} (for app.py).") 
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # Tambahkan quiet=True
 
 download_nltk_data()
 
@@ -581,7 +580,7 @@ if st.session_state.crawled_data is not None and st.session_state.final_esg_cate
         st.markdown("Apakah Anda ingin tetap melanjutkan ke analisis detail atau mengakhiri proses?")
         col1, col2 = st.columns(2)
         with col1:
-            
+            # Data sudah disimpan di session_state, jadi tidak perlu aksi lain selain notifikasi
             if st.button("Tetap Lanjutkan ke Analisis"):
                 st.success("Data artikel telah disimpan. Silakan gunakan **sidebar** untuk navigasi ke halaman **'02_Analysis'**.")
         with col2:
