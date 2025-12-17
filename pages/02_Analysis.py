@@ -2,7 +2,7 @@
 
 import streamlit as st
 import pandas as pd
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification # Tetap untuk NER
+from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
 import networkx as nx
 from pyvis.network import Network
 import os
@@ -15,22 +15,35 @@ from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize, word_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# --- NLTK Data Download (Instruksi untuk pengguna) ---
-# Pastikan Anda telah mengunduh data NLTK yang diperlukan:
-# import nltk
-# nltk.download('punkt')
-# nltk.download('stopwords')
-# Jika Anda mendeploy ke Streamlit Cloud, buat file `nltk.txt` di root proyek Anda
-# dengan isi:
-# punkt
-# stopwords
-
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Analysis",
     page_icon="📊",
     layout="wide",
 )
+
+# --- NLTK Data Download (Programmatic and Cached) ---
+@st.cache_resource
+def load_nltk_data():
+    """
+    Downloads NLTK data (punkt and stopwords) if not already present.
+    This function is cached to run only once.
+    """
+    with st.spinner("Mengunduh data NLTK (ini hanya akan berjalan sekali)..."):
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except nltk.downloader.DownloadError:
+            nltk.download('punkt')
+        
+        try:
+            nltk.data.find('corpora/stopwords')
+        except nltk.downloader.DownloadError:
+            nltk.download('stopwords')
+    st.success("Data NLTK siap!")
+
+# Panggil fungsi pengunduhan NLTK di awal aplikasi
+load_nltk_data()
+
 
 st.title("Analisis Konten Artikel")
 st.write("Halaman ini menampilkan ringkasan teks (TF-IDF), entitas NER (PER, ORG), dan knowledge graph dari konten yang di-crawl.")
@@ -104,7 +117,6 @@ def get_ner_entities(text, ner_pipeline):
         return {'PER': [], 'ORG': []}
     
     # Batasi panjang input untuk NER
-    # Model NER biasanya memiliki batas input sekitar 512 token. Estimasi kasar: 1 token ~ 4 karakter.
     input_text = text[:2000] 
     
     entities = ner_pipeline(input_text)
