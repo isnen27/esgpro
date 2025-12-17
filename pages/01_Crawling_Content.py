@@ -1,5 +1,3 @@
-# app.py (Pastikan bagian ini sudah seperti ini)
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,7 +8,7 @@ from nltk.corpus import wordnet as wn
 import os
 import requests
 from bs4 import BeautifulSoup
-import re
+import re # Pastikan re diimpor
 
 # --- Konfigurasi Streamlit ---
 st.set_page_config(layout="wide", page_title="ESG Screening Tool")
@@ -41,10 +39,9 @@ def download_nltk_data():
         try:
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # quiet=True ditambahkan
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True)
 
 download_nltk_data()
-
 # --- 1️⃣ Daftar dasar ESG ---
 env_base = [
     "environment", "environmental", "green", "eco", "ekologis", "berkelanjutan", "keberlanjutan",
