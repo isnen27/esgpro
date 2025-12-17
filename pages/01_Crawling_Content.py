@@ -13,6 +13,14 @@ import re
 # --- Konfigurasi Streamlit ---
 st.set_page_config(layout="wide", page_title="ESG Screening Tool")
 
+# --- Inisialisasi Session State ---
+if 'crawled_data' not in st.session_state:
+    st.session_state.crawled_data = None
+if 'final_esg_category' not in st.session_state:
+    st.session_state.final_esg_category = None
+if 'crawled_url' not in st.session_state:
+    st.session_state.crawled_url = None
+
 # --- 0️⃣ Download Data NLTK (WordNet) ---
 @st.cache_resource
 def download_nltk_data():
@@ -461,14 +469,19 @@ if st.button("Crawl dan Lakukan Screening ESG"):
                 st.error("Pilihan website tidak valid.")
                 crawled_data = {'crawled_title': 'Error', 'crawled_date': 'Error', 'crawled_content': 'Pilihan website tidak valid.'}
 
+        # Simpan hasil crawling ke session state
+        st.session_state.crawled_data = crawled_data
+        st.session_state.crawled_url = user_url_input
+
         if crawled_data['crawled_title'].startswith('Gagal diakses') or crawled_data['crawled_title'].startswith('Kesalahan tak terduga'):
             st.error(f"Gagal melakukan crawling: {crawled_data['crawled_title']}")
             st.write(f"Detail: {crawled_data['crawled_content']}")
+            st.session_state.final_esg_category = "Gagal Crawling" # Set category to indicate failure
         else:
             st.success("Crawling berhasil!")
             st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
             st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
-            with st.expander("Lihat Isi Artikel Lengkap"): # Menampilkan konten lengkap dalam expander
+            with st.expander("Lihat Isi Artikel Lengkap"):
                 st.write(crawled_data['crawled_content'])
 
             crawled_title_for_screening = crawled_data['crawled_title']
@@ -537,9 +550,43 @@ if st.button("Crawl dan Lakukan Screening ESG"):
                 st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
 
             st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
+            st.session_state.final_esg_category = final_esg_category # Simpan kategori akhir ke session state
 
-            # Jika kategori akhir adalah Non-ESG, proses tidak dilanjutkan
-            if final_esg_category == "Non-ESG":
-                st.warning("Proses tidak dilanjutkan karena diklasifikasikan sebagai Non-ESG.")
-            else:
-                st.success("Proses dapat dilanjutkan karena diklasifikasikan sebagai ESG.")
+# Bagian untuk melanjutkan ke analisis, akan muncul setelah screening selesai
+if st.session_state.crawled_data is not None and st.session_state.final_esg_category is not None:
+    st.write("---")
+    st.markdown("#### Lanjutkan ke Tahap Analisis?")
+
+    if st.session_state.final_esg_category == "Non-ESG":
+        st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+        if st.button("Tetap Lanjutkan ke Analisis"):
+            st.success("Anda memilih untuk melanjutkan ke tahap Analisis.")
+            st.markdown("### Tahap 02: Analisis Detail")
+            st.info(f"""
+            **URL Artikel:** {st.session_state.crawled_url}
+            **Judul Artikel:** {st.session_state.crawled_data['crawled_title']}
+            **Kategori ESG Akhir:** {st.session_state.final_esg_category}
+            **Isi Artikel (untuk analisis):**
+            ```
+            {st.session_state.crawled_data['crawled_content'][:500]}...
+            ```
+            *(Di sini Anda bisa menambahkan logika atau komponen Streamlit untuk melakukan analisis lebih lanjut
+            menggunakan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
+            """)
+    elif st.session_state.final_esg_category == "Gagal Crawling":
+        st.error("Tidak dapat melanjutkan ke analisis karena crawling artikel gagal.")
+    else:
+        st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+        if st.button("Lanjutkan ke Analisis"):
+            st.success("Anda memilih untuk melanjutkan ke tahap Analisis.")
+            st.markdown("### Tahap 02: Analisis Detail")
+            st.info(f"""
+            **URL Artikel:** {st.session_state.crawled_url}
+            **Judul Artikel:** {st.session_state.crawled_data['crawled_title']}
+            **Kategori ESG Akhir:** {st.session_state.final_esg_category}
+            **Isi Artikel (untuk analisis):**
+            ```
+            {st.session_state.crawled_data['crawled_content'][:500]}...
+            ```
+            *(Menyimpan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
+            """)
