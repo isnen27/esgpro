@@ -1,215 +1,153 @@
 # pages/02_Analysis.py
-
 import streamlit as st
-import pandas as pd
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
-import networkx as nx
-from pyvis.network import Network
-import os
-import re
-import torch
-from collections import Counter
-import streamlit.components.v1 as components
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import sent_tokenize, word_tokenize
+from nltk.tag import pos_tag
+from nltk.chunk import ne_chunk
+from sklearn.feature_extraction.text import TfidfVectorizer
+import string
+import heapq # Untuk mengambil N elemen terbesar dari list
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Analysis",
-    page_icon="📊",
-    layout="wide",
-)
+st.set_page_config(layout="wide", page_title="ESG Analysis")
+st.title("ESG Analysis Page")
 
-st.title("Analisis Konten Artikel")
-st.write("Halaman ini menampilkan ringkasan teks (Frequency Based), entitas NER (PER, ORG), dan knowledge graph.")
+st.markdown("---")
 
-# --- Helper Function: Simple Sentence Splitter ---
-def simple_sent_tokenize(text):
-    """Memecah teks menjadi kalimat menggunakan RegEx sederhana."""
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text)
-    return [s.strip() for s in sentences if s.strip()]
-
-def simple_word_tokenize(text):
-    """Membersihkan dan memecah kalimat menjadi kata."""
-    return re.findall(r'\w+', text.lower())
-
-# --- Model Loading (Cached) ---
+# --- NLTK Data Downloads (Cached) ---
 @st.cache_resource
-def load_ner_model():
-    """Loads the NER model for Indonesian (Cahya)."""
-    device = 0 if torch.cuda.is_available() else -1
-    with st.spinner("Memuat model NER..."):
-        model_name = "cahya/bert-base-indonesian-ner"
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForTokenClassification.from_pretrained(model_name)
-            ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple", device=device)
-            return ner_pipeline
-        except Exception as e:
-            st.error(f"Gagal memuat model: {e}")
-            return None
+def download_nltk_data_for_analysis():
+    """Mengunduh data NLTK yang diperlukan untuk analisis (cached)."""
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt')
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        nltk.download('stopwords')
+    try:
+        nltk.data.find('taggers/averaged_perceptron_tagger')
+    except LookupError:
+        nltk.download('averaged_perceptron_tagger')
+    try:
+        nltk.data.find('chunkers/maxent_ne_chunker')
+    except LookupError:
+        nltk.download('maxent_ne_chunker')
+    try:
+        nltk.data.find('corpora/words') # Diperlukan oleh maxent_ne_chunker
+    except LookupError:
+        nltk.download('words')
 
-# --- Frequency-Based Summarization Function ---
-@st.cache_data
-def get_summary_frequency(text, num_sentences=5):
-    """Meringkas teks berdasarkan frekuensi kata."""
-    if not text: return "Tidak ada teks."
-    sentences = simple_sent_tokenize(text)
-    if len(sentences) <= num_sentences: return text
+download_nltk_data_for_analysis()
 
-    stopwords_id = {'yang', 'di', 'dan', 'itu', 'dengan', 'untuk', 'tidak', 'ini', 'dari', 'dalam', 'akan', 'pada', 'juga', 'saya', 'ke', 'karena', 'tersebut', 'bisa', 'ada', 'mereka', 'kata', 'adalah', 'atau', 'saat', 'oleh', 'sudah', 'telah', 'namun', 'tetapi', 'sebagai', 'dia', 'ia', 'bahwa'}
-    words = simple_word_tokenize(text)
-    clean_words = [w for w in words if w not in stopwords_id and len(w) > 2]
-    word_freq = Counter(clean_words)
-    if not word_freq: return text[:500] + "..."
+# --- Fungsi untuk peringkasan TF-IDF ---
+def summarize_text_tfidf(text, num_sentences=5):
+    if not text or len(text.strip()) == 0:
+        return "Tidak ada konten untuk diringkas."
 
-    max_freq = max(word_freq.values())
-    for word in word_freq: word_freq[word] = word_freq[word] / max_freq
+    sentences = sent_tokenize(text, language='indonesian')
+    if len(sentences) <= num_sentences:
+        return text # Jika teks pendek, kembalikan seluruh teks
 
+    # Preprocessing: lowercase, remove punctuation, remove stopwords
+    stop_words_id = set(stopwords.words('indonesian'))
+    
+    def preprocess(sentence):
+        words = word_tokenize(sentence.lower(), language='indonesian')
+        return [word for word in words if word.isalnum() and word not in stop_words_id]
+
+    # Buat TF-IDF Vectorizer
+    # Gunakan fungsi preprocessing kustom untuk tokenizer
+    vectorizer = TfidfVectorizer(tokenizer=preprocess, stop_words=list(stop_words_id))
+    
+    try:
+        tfidf_matrix = vectorizer.fit_transform(sentences)
+    except ValueError: # Handle empty vocabulary if text is too short or all stopwords
+        return "Tidak dapat meringkas. Konten mungkin terlalu pendek atau tidak relevan."
+
+    # Hitung skor untuk setiap kalimat
     sentence_scores = {}
-    for sent in sentences:
-        words_in_sent = simple_word_tokenize(sent)
-        if 5 < len(words_in_sent) < 100:
-            for word in words_in_sent:
-                if word in word_freq:
-                    sentence_scores[sent] = sentence_scores.get(sent, 0) + word_freq[word]
+    for i, sentence in enumerate(sentences):
+        score = tfidf_matrix[i].sum() # Jumlahkan skor TF-IDF kata-kata dalam kalimat
+        sentence_scores[sentence] = score
 
-    import heapq
-    summary_sentences = heapq.nlargest(num_sentences, sentence_scores, key=sentence_scores.get)
-    return " ".join(sorted(summary_sentences, key=lambda s: sentences.index(s)))
-
-# --- NER Function ---
-@st.cache_data
-def get_ner_entities(text, _ner_pipeline):
-    """Extracts PER and ORG entities."""
-    if not text or _ner_pipeline is None: return {'PER': [], 'ORG': []}
-    input_text = text[:1500]
-    try:
-        entities = _ner_pipeline(input_text)
-    except Exception: return {'PER': [], 'ORG': []}
+    # Ambil N kalimat teratas
+    # Gunakan heapq.nlargest untuk efisiensi
+    best_sentences = heapq.nlargest(num_sentences, sentence_scores, key=sentence_scores.get)
     
-    per_entities, org_entities = [], []
-    for entity in entities:
-        word = entity['word'].replace('##', '')
-        group = entity.get('entity_group', entity.get('entity', ''))
-        if 'PER' in group and len(word) > 2: per_entities.append(word)
-        elif 'ORG' in group and len(word) > 2: org_entities.append(word)
-            
-    return {'PER': sorted(list(set(per_entities))), 'ORG': sorted(list(set(org_entities)))}
+    return ' '.join(best_sentences)
 
-# --- Knowledge Graph Generation Function (UPDATED) ---
-@st.cache_data
-def generate_knowledge_graph(text, ner_results):
-    """Generates a knowledge graph with white background and visible edge labels."""
-    if not text or (not ner_results['PER'] and not ner_results['ORG']):
-        return None
+# --- Fungsi untuk NER menggunakan NLTK ---
+def perform_ner_nltk(text):
+    if not text or len(text.strip()) == 0:
+        return []
 
-    G = nx.Graph()
+    # Tokenisasi kata dan POS tagging
+    words = word_tokenize(text, language='indonesian')
+    tagged_words = pos_tag(words)
+
+    # Named Entity Chunking
+    named_entities = []
+    tree = ne_chunk(tagged_words)
+
+    for subtree in tree.subtrees():
+        if subtree.label() != 'S': # 'S' adalah label untuk kalimat
+            entity_type = subtree.label()
+            entity_name = " ".join([word for word, tag in subtree.leaves()])
+            named_entities.append((entity_name, entity_type))
     
-    # Add Nodes
-    for entity in ner_results['PER']:
-        G.add_node(entity, label=entity, group='PER', title=f"Orang: {entity}")
-    for entity in ner_results['ORG']:
-        G.add_node(entity, label=entity, group='ORG', title=f"Organisasi: {entity}")
+    return named_entities
 
-    sentences = simple_sent_tokenize(text)
-    all_entities = ner_results['PER'] + ner_results['ORG']
-
-    # Create Edges based on co-occurrence
-    for sentence in sentences:
-        found_entities = []
-        sent_lower = sentence.lower() # Case insensitive check
-        for entity in all_entities:
-            if entity.lower() in sent_lower:
-                found_entities.append(entity)
-        
-        for i in range(len(found_entities)):
-            for j in range(i + 1, len(found_entities)):
-                node1 = found_entities[i]
-                node2 = found_entities[j]
-                if node1 != node2:
-                    # UPDATE 1: Menambahkan Label pada Edge NetworkX
-                    if G.has_edge(node1, node2):
-                        G[node1][node2]['weight'] += 1
-                        # Update label dengan jumlah baru
-                        G[node1][node2]['label'] = f"Bersama ({G[node1][node2]['weight']})"
-                    else:
-                        # Label awal
-                        G.add_edge(node1, node2, weight=1, label="Bersama (1)")
-
-    if not G.nodes:
-        return None
-
-    # UPDATE 2: Background Putih & Font Hitam
-    net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black")
+# Cek apakah ada data di session_state dari halaman sebelumnya
+if st.session_state.crawled_data and st.session_state.final_esg_category:
+    st.success("Data artikel berhasil dimuat dari sesi screening!")
     
-    # Opsi tambahan agar tampilan di background putih lebih rapi
-    net.set_options("""
-    var options = {
-      "edges": {
-        "color": {"inherit": true},
-        "smooth": false,
-        "font": {"size": 10, "align": "middle"} 
-      },
-      "physics": {
-        "barnesHut": {"gravitationalConstant": -2000, "centralGravity": 0.3, "springLength": 95},
-        "minVelocity": 0.75
-      }
-    }
-    """)
+    crawled_url = st.session_state.crawled_url
+    crawled_title = st.session_state.crawled_data['crawled_title']
+    crawled_date = st.session_state.crawled_data['crawled_date']
+    crawled_content = st.session_state.crawled_data['crawled_content']
+    final_esg_category = st.session_state.final_esg_category
+
+    st.markdown("### Artikel yang Sedang Dianalisis:")
+    st.write(f"**URL Artikel:** {crawled_url}")
+    st.write(f"**Judul Artikel:** {crawled_title}")
+    st.write(f"**Tanggal Publikasi:** {crawled_date}")
+    st.write(f"**Kategori ESG Akhir:** {final_esg_category}")
     
-    for node in G.nodes(data=True):
-        # Menggunakan warna yang lebih gelap agar kontras di background putih
-        color = '#D32F2F' if node[1].get('group') == 'PER' else '#388E3C' # Merah Tua & Hijau Tua
-        net.add_node(node[0], label=node[0], title=node[1].get('title'), color=color)
-        
-    for edge in G.edges(data=True):
-        # UPDATE 3: Meneruskan label ke PyVis
-        net.add_edge(
-            edge[0], 
-            edge[1], 
-            value=edge[2]['weight'], 
-            label=edge[2]['label'] # Ini yang memunculkan teks di garis
-        )
-
-    try:
-        path = '/tmp'
-        if not os.path.exists(path): path = '.' 
-        output_path = f'{path}/kg.html'
-        net.save_graph(output_path)
-        with open(output_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except Exception:
-        return None
-
-# --- Main Application Logic ---
-if 'crawled_content' not in st.session_state or not st.session_state.crawled_content:
-    st.warning("⚠️ Belum ada data artikel. Silakan Crawling dulu.")
-else:
-    crawled_content = st.session_state.crawled_content
-    crawled_title = st.session_state.get('crawled_title', 'Tanpa Judul')
-
-    st.subheader(f"Analisis: {crawled_title}")
-    
-    with st.expander("📝 Lihat Teks Asli"):
+    with st.expander("Lihat Isi Artikel Lengkap"):
         st.write(crawled_content)
 
-    st.markdown("### 📑 Ringkasan Teks")
-    summary = get_summary_frequency(crawled_content)
-    st.success(summary)
+    st.markdown("---")
+    st.markdown("#### Hasil Analisis Detail")
 
-    st.markdown("### 🔍 Deteksi Entitas (NER)")
-    ner_pipeline = load_ner_model()
+    # --- TF-IDF Summarization ---
+    st.subheader("Peringkasan Artikel (TF-IDF)")
+    num_sentences_summary = st.slider("Jumlah kalimat untuk ringkasan:", min_value=1, max_value=10, value=5)
+    with st.spinner("Membuat ringkasan artikel..."):
+        summary = summarize_text_tfidf(crawled_content, num_sentences=num_sentences_summary)
+    st.write(summary)
+
+    # --- NLTK NER ---
+    st.subheader("Named Entity Recognition (NER) dengan NLTK")
+    with st.spinner("Mengekstrak entitas nama..."):
+        entities = perform_ner_nltk(crawled_content)
     
-    if ner_pipeline:
-        ner_entities = get_ner_entities(crawled_content, ner_pipeline)
-        c1, c2 = st.columns(2)
-        c1.info(f"Orang: {len(ner_entities['PER'])}")
-        c1.write(ner_entities['PER'])
-        c2.info(f"Organisasi: {len(ner_entities['ORG'])}")
-        c2.write(ner_entities['ORG'])
+    if entities:
+        entity_df = pd.DataFrame(entities, columns=['Entity', 'Type'])
+        st.dataframe(entity_df)
+    else:
+        st.info("Tidak ada entitas nama yang terdeteksi dalam artikel.")
 
-        st.markdown("### 🕸️ Knowledge Graph")
-        kg_html = generate_knowledge_graph(crawled_content, ner_entities)
-        if kg_html:
-            components.html(kg_html, height=600, scrolling=True)
-        else:
-            st.write("Belum cukup data hubungan untuk graph.")
+    st.markdown("---")
+    if st.button("Bersihkan Data & Kembali ke Screening"):
+        # Bersihkan session state agar halaman screening bisa memulai proses baru
+        st.session_state.crawled_data = None
+        st.session_state.final_esg_category = None
+        st.session_state.crawled_url = None
+        st.warning("Data sesi telah dihapus. Silakan gunakan sidebar untuk kembali ke halaman utama untuk screening baru.")
+        st.rerun() # Muat ulang halaman analisis untuk merefleksikan penghapusan state
+else:
+    st.warning("Tidak ada data artikel yang tersedia untuk analisis. Silakan kembali ke halaman utama untuk melakukan screening terlebih dahulu.")
+    st.info("Gunakan sidebar di kiri untuk navigasi.")
+
