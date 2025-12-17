@@ -570,8 +570,7 @@ if st.session_state.crawled_data is not None and st.session_state.final_esg_cate
             ```
             {st.session_state.crawled_data['crawled_content'][:500]}...
             ```
-            *(Di sini Anda bisa menambahkan logika atau komponen Streamlit untuk melakukan analisis lebih lanjut
-            menggunakan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
+            *(Menyimpan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
             """)
     elif st.session_state.final_esg_category == "Gagal Crawling":
         st.error("Tidak dapat melanjutkan ke analisis karena crawling artikel gagal.")
