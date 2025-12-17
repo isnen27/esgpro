@@ -8,3 +8,4 @@ imbalanced-learn
 joblib
 ydata-profiling
 torch
+sentence-transformers
