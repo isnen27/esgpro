@@ -29,17 +29,33 @@ def load_nltk_data():
     Downloads NLTK data (punkt and stopwords) if not already present.
     This function is cached to run only once.
     """
-    with st.spinner("Mengunduh data NLTK (ini hanya akan berjalan sekali)..."):
+    with st.spinner("Memastikan data NLTK tersedia..."):
+        # Coba temukan 'punkt'. Jika tidak ada, unduh.
         try:
             nltk.data.find('tokenizers/punkt')
-        except nltk.downloader.DownloadError:
-            nltk.download('punkt')
+            # st.info("NLTK 'punkt' data sudah ada.") # Bisa dihapus untuk mengurangi log
+        except LookupError: # Tangkap LookupError yang dikeluarkan oleh nltk.data.find()
+            st.warning("NLTK 'punkt' data tidak ditemukan. Mengunduh...")
+            try:
+                nltk.download('punkt')
+                st.success("NLTK 'punkt' data berhasil diunduh.")
+            except Exception as e:
+                st.error(f"Gagal mengunduh NLTK 'punkt' data: {e}")
+                st.stop() # Hentikan aplikasi jika pengunduhan penting gagal
         
+        # Coba temukan 'stopwords'. Jika tidak ada, unduh.
         try:
             nltk.data.find('corpora/stopwords')
-        except nltk.downloader.DownloadError:
-            nltk.download('stopwords')
-    st.success("Data NLTK siap!")
+            # st.info("NLTK 'stopwords' data sudah ada.") # Bisa dihapus untuk mengurangi log
+        except LookupError: # Tangkap LookupError yang dikeluarkan oleh nltk.data.find()
+            st.warning("NLTK 'stopwords' data tidak ditemukan. Mengunduh...")
+            try:
+                nltk.download('stopwords')
+                st.success("NLTK 'stopwords' data berhasil diunduh.")
+            except Exception as e:
+                st.error(f"Gagal mengunduh NLTK 'stopwords' data: {e}")
+                st.stop() # Hentikan aplikasi jika pengunduhan penting gagal
+    st.success("Semua data NLTK siap!")
 
 # Panggil fungsi pengunduhan NLTK di awal aplikasi
 load_nltk_data()
@@ -49,7 +65,6 @@ st.title("Analisis Konten Artikel")
 st.write("Halaman ini menampilkan ringkasan teks (TF-IDF), entitas NER (PER, ORG), dan knowledge graph dari konten yang di-crawl.")
 
 # --- Model Loading (Cached) ---
-# Hanya NER model yang dimuat dari transformers
 @st.cache_resource
 def load_ner_model():
     """Loads the NER model for Indonesian."""
@@ -72,38 +87,29 @@ def get_summary_tfidf(text, num_sentences=5):
         return text # Jika jumlah kalimat kurang dari atau sama dengan yang diminta, kembalikan teks asli
 
     # Inisialisasi TF-IDF Vectorizer
-    # Menggunakan stop words bahasa Indonesia
     stop_words_id = set(stopwords.words('indonesian'))
-    vectorizer = TfidfVectorizer(stop_words=list(stop_words_id)) # Convert set to list
+    vectorizer = TfidfVectorizer(stop_words=list(stop_words_id))
 
-    # Fitur TF-IDF untuk setiap kalimat
     tfidf_matrix = vectorizer.fit_transform(sentences)
 
-    # Hitung skor untuk setiap kalimat (rata-rata TF-IDF kata dalam kalimat)
     sentence_scores = {}
     for i, sentence in enumerate(sentences):
-        # Ambil indeks kata-kata yang ada di vocabulary vectorizer
         feature_index = [vectorizer.vocabulary_.get(word) for word in word_tokenize(sentence.lower()) if word.isalpha() and word not in stop_words_id]
-        feature_index = [idx for idx in feature_index if idx is not None] # Filter None
+        feature_index = [idx for idx in feature_index if idx is not None]
         
         if feature_index:
-            # Rata-rata TF-IDF dari kata-kata yang relevan dalam kalimat
             score = tfidf_matrix[i, feature_index].sum() / len(feature_index)
             sentence_scores[sentence] = score
         else:
-            sentence_scores[sentence] = 0 # Jika tidak ada kata relevan, skor 0
+            sentence_scores[sentence] = 0
 
-    # Urutkan kalimat berdasarkan skor dan ambil N teratas
     ranked_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)
     
-    # Ambil kalimat-kalimat teratas dan urutkan kembali sesuai urutan aslinya
     summary_sentences = []
     original_sentence_order = {sentence: i for i, sentence in enumerate(sentences)}
     
-    # Ambil num_sentences kalimat teratas
     top_sentences = [s[0] for s in ranked_sentences[:num_sentences]]
     
-    # Urutkan kembali berdasarkan kemunculan di teks asli
     summary_sentences = sorted(top_sentences, key=lambda s: original_sentence_order.get(s, len(sentences)))
 
     return " ".join(summary_sentences)
@@ -116,7 +122,6 @@ def get_ner_entities(text, ner_pipeline):
     if not text:
         return {'PER': [], 'ORG': []}
     
-    # Batasi panjang input untuk NER
     input_text = text[:2000] 
     
     entities = ner_pipeline(input_text)
@@ -149,7 +154,7 @@ def generate_knowledge_graph(text, ner_results):
     for entity in ner_results['ORG']:
         G.add_node(entity, label=entity, group='ORG', title=f"Organisasi: {entity}")
 
-    sentences = sent_tokenize(text) # Menggunakan sent_tokenize dari NLTK
+    sentences = sent_tokenize(text)
 
     for sentence in sentences:
         found_entities_in_sentence = []
@@ -200,7 +205,6 @@ def generate_knowledge_graph(text, ner_results):
     return html_content
 
 # --- Main Application Logic ---
-# Periksa apakah konten sudah di-crawl dari halaman sebelumnya
 if 'crawled_content' not in st.session_state or not st.session_state.crawled_content:
     st.warning("Silakan kembali ke halaman 'Crawling Content' untuk mengambil artikel terlebih dahulu.")
     st.info("Anda bisa menggunakan URL contoh di halaman Crawling Content, lalu klik 'Mulai Crawling'.")
