@@ -1,332 +1,271 @@
-# pages/01_crawling_content.py
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import re
+import numpy as np
+import torch
+from sentence_transformers import SentenceTransformer, util
+import nltk
+from nltk.corpus import wordnet as wn
 import os
 
-# --- Fungsi Crawling untuk Kompas.com ---
-@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
-def crawl_kompas(url):
-    """
-    Mengambil judul, tanggal, dan isi artikel dari URL Kompas.com (termasuk subdomain).
-    Struktur umum:
-    - Judul: <h1 class="read__title">
-    - Tanggal: <div class="read__time">
-    - Isi artikel: <div class="read__content"> (kemudian mencari <p> di dalamnya)
-    """
+# --- Konfigurasi Streamlit ---
+st.set_page_config(layout="wide", page_title="ESG Screening Tool")
+
+# --- 0️⃣ Download Data NLTK (WordNet) ---
+@st.cache_resource
+def download_nltk_data():
+    """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada."""
     try:
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/100.0.4896.127 Safari/537.36'
-            )
-        }
-
-        # Ambil halaman dengan timeout 10 detik
-        req = requests.get(url, headers=headers, timeout=10)
-        req.raise_for_status()
-        soup = BeautifulSoup(req.text, 'lxml')
-
-        # ==========================
-        # 1️⃣ Ambil Judul Artikel
-        # ==========================
-        title_tag = soup.find('h1', class_='read__title')
-        if not title_tag:
-            title_tag = soup.find('h1')  # fallback
-        crawled_title = title_tag.get_text(strip=True) if title_tag else 'Tidak ada judul'
-
-        # ==========================
-        # 2️⃣ Ambil Tanggal Publikasi
-        # ==========================
-        date_tag = soup.find('div', class_='read__time')
-        if not date_tag:
-            date_tag = soup.find('time')
-        crawled_date = date_tag.get_text(strip=True) if date_tag else 'Tidak ada tanggal'
-
-        # ==========================
-        # 3️⃣ Ambil Isi Artikel
-        # ==========================
-        crawled_content = 'Tidak ada konten'
-        full_text = ''
-
-        main_content_div = soup.find('div', class_='read__content')
-
-        if main_content_div:
-            paragraphs = main_content_div.find_all('p')
-            if paragraphs:
-                full_text = ' '.join(p.get_text(strip=True) for p in paragraphs)
-            else:
-                full_text = main_content_div.get_text(separator=' ', strip=True)
-        else:
-            fallback_content_div = (
-                soup.find('div', class_='clearfix') or
-                soup.find('article')
-            )
-            if fallback_content_div:
-                paragraphs = fallback_content_div.find_all('p')
-                if paragraphs:
-                    full_text = ' '.join(p.get_text(strip=True) for p in paragraphs)
-                else:
-                    full_text = fallback_content_div.get_text(separator=' ', strip=True)
-            else:
-                paragraphs = soup.find_all('p')
-                full_text = ' '.join(p.get_text(strip=True) for p in paragraphs) if paragraphs else ''
-
-        # ==========================
-        # 4️⃣ Bersihkan teks
-        # ==========================
-        if full_text:
-            unwanted_patterns = [
-                r'Baca juga :.*', r'Baca Juga :.*', r'Penulis :.*', r'Editor :.*',
-                r'Sumber :.*', r'Ikuti kami.*', r'Simak berita.*', r'Berita Terkait :',
-                r'Lihat Artikel Asli', r'• .*', r'Otomatis Mode Gelap Mode Terang.*',
-                r'Login Gabung KOMPAS.com.*', r'Berikan Masukanmu.*', r'Langganan Kompas.*',
-            ]
-
-            for pattern in unwanted_patterns:
-                full_text = re.sub(pattern, '', full_text, flags=re.DOTALL | re.IGNORECASE).strip()
-
-            full_text = re.sub(r'\s+', ' ', full_text).strip()
-
-            if full_text:
-                crawled_content = full_text
-
-        return {
-            'crawled_title': crawled_title,
-            'crawled_date': crawled_date,
-            'crawled_content': crawled_content
-        }
-
-    except requests.exceptions.Timeout:
-        return {
-            'crawled_title': 'Gagal diakses (Timeout)',
-            'crawled_date': 'Gagal diakses (Timeout)',
-            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
-        }
-    except requests.exceptions.RequestException as e:
-        return {
-            'crawled_title': 'Gagal diakses',
-            'crawled_date': 'Gagal diakses',
-            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
-        }
-    except Exception as e:
-        return {
-            'crawled_title': 'Kesalahan tak terduga',
-            'crawled_date': 'Kesalahan tak terduga',
-            'crawled_content': f'Kesalahan tak terduga: {e}'
-        }
-
-# --- Fungsi Crawling untuk Tribunnews.com ---
-@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
-def crawl_tribunnews(url):
-    """
-    Mengambil judul, tanggal, dan isi artikel dari URL tribunnews.com.
-    Menambahkan penanganan error dan timeout.
-    """
+        nltk.data.find('corpora/wordnet')
+    except nltk.downloader.DownloadError:
+        st.info("📦 Mengunduh data NLTK 'wordnet'...")
+        nltk.download('wordnet')
     try:
-        req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'}, timeout=10)
-        req.raise_for_status()
-        soup = BeautifulSoup(req.text, 'lxml')
+        nltk.data.find('corpora/omw-1.4')
+    except nltk.downloader.DownloadError:
+        st.info("📦 Mengunduh data NLTK 'omw-1.4' (Open Multilingual Wordnet)...")
+        nltk.download('omw-1.4')
+    st.success("✅ Data NLTK siap!")
 
-        crawled_title = 'Tidak ada judul'
-        try:
-            title_tag = soup.find('h1', class_='f32 ln40 fbo txt-black display-block mt10')
-            if title_tag:
-                crawled_title = title_tag.get_text(strip=True)
-            else:
-                title_tag_fallback = soup.find('title')
-                if title_tag_fallback:
-                    crawled_title = title_tag_fallback.get_text(strip=True)
-        except Exception:
-            pass
+download_nltk_data()
 
-        crawled_date = 'Tidak ada tanggal'
-        try:
-            date_tag = soup.find('time')
-            if date_tag:
-                crawled_date = date_tag.get_text(strip=True)
-        except Exception:
-            pass
+# --- 1️⃣ Daftar dasar ESG ---
+env_base = [
+    "environment", "environmental", "green", "eco", "ekologis", "berkelanjutan", "keberlanjutan",
+    "climate", "iklim", "perubahan iklim", "global warming", "pemanasan global", "emisi", "karbon",
+    "net zero", "dekarbonisasi", "energi terbarukan", "energi bersih", "energi hijau", "hemat energi",
+    "efisiensi energi", "energi alternatif", "hidrogen", "mobil listrik", "EV", "transportasi hijau",
+    "sampah", "limbah", "polusi", "plastik", "daur ulang", "recycle", "circular economy", "ekonomi sirkular",
+    "konservasi", "hutan", "reforestasi", "biodiversity", "keanekaragaman hayati", "flora", "fauna",
+    "urban farming", "pertanian berkelanjutan", "produksi hijau", "rantai pasok hijau", "industri hijau",
+    "lingkungan hidup", "mitigasi iklim", "adaptasi iklim", "energi surya", "geotermal"
+]
 
-        crawled_content = 'Tidak ada konten'
-        try:
-            content_div = soup.find('div', class_='side-article txt-article multi-fontsize')
-            if content_div:
-                full_text = content_div.get_text(separator=' ', strip=True)
+soc_base = [
+    "social", "sosial", "csr", "tanggung jawab sosial", "community", "masyarakat", "pemberdayaan masyarakat",
+    "pemberdayaan perempuan", "human rights", "hak asasi manusia", "karyawan", "diversity", "kesetaraan",
+    "gender equality", "empowerment", "pendidikan", "kesehatan", "keselamatan kerja", "well-being",
+    "kesehatan mental", "donasi", "filantropi", "keamanan kerja", "human capital", "pembangunan manusia",
+    "komunitas", "pengentasan kemiskinan", "lapangan kerja", "inklusifitas", "upah layak", "perlindungan konsumen",
+    "kesejahteraan masyarakat", "partisipasi masyarakat", "komunikasi sosial", "hubungan industrial",
+    "akses pendidikan", "perempuan dan anak", "pemberdayaan difabel", "UMKM", "ekonomi lokal", "volunteering",
+    "philanthropy", "stakeholder engagement", "fair labor", "equal opportunity", "community development"
+]
 
-                unwanted_patterns = [
-                    r'Baca Juga :.*', r'Penulis :.*', r'Editor :.*', r'Sumber :.*',
-                    r'Ikuti kami di Google News', r'Simak berita terbaru Tribunnews.com di Google News',
-                    r'Berita Terkait :', r'Baca juga :', r'Lihat Artikel Asli', r'• .*',
-                ]
+gov_base = [
+    "governance", "tata kelola", "good corporate governance", "governansi", "kepatuhan", "regulasi",
+    "transparansi", "akuntabilitas", "etika", "integritas", "kode etik", "etika bisnis", "audit",
+    "dewan komisaris", "dewan direksi", "pengawasan", "manajemen risiko", "anti korupsi", "whistleblowing",
+    "laporan keberlanjutan", "annual report", "disclosure", "stakeholder", "shareholder", "responsible management",
+    "kepemimpinan beretika", "integritas bisnis", "pengendalian internal", "audit internal", "komite risiko",
+    "AML", "KYC", "due diligence", "strategi tata kelola", "transparansi keuangan", "kepatuhan hukum",
+    "sistem pelaporan pelanggaran", "good governance", "akuntabilitas publik", "independent board", "risk committee"
+]
 
-                for pattern in unwanted_patterns:
-                    full_text = re.sub(pattern, '', full_text, flags=re.DOTALL | re.IGNORECASE).strip()
+# --- 2️⃣ Fungsi untuk mengambil sinonim dari WordNet Bahasa ---
+def get_synonyms_wordnet(word, lang='ind'):
+    """Mengambil sinonim dari WordNet untuk kata tertentu dalam bahasa yang ditentukan."""
+    try:
+        syns = set()
+        for syn in wn.synsets(word, lang=lang):
+            for lemma in syn.lemmas(lang):
+                syns.add(lemma.name().replace("_", " "))
+        return list(syns)
+    except Exception:
+        return []
+
+# --- 3️⃣ Fallback morfologi sederhana ---
+def morphology_variants(word):
+    """Menghasilkan variasi morfologi sederhana dari sebuah kata."""
+    variants = set()
+    if word.startswith("ber"):
+        variants.add(word.replace("ber", "ke", 1))
+    if word.startswith("ke"):
+        variants.add(word.replace("ke", "ber", 1))
+    if word.endswith("an"):
+        variants.add(word[:-2])
+    if not word.endswith("an"):
+        variants.add(word + "an")
+    variants.add(word)
+    return list(variants)
+
+# --- 4️⃣ Fallback semantik berbasis embedding similarity ---
+def semantic_expand(base_list, model, top_k=3):
+    """Memperluas daftar kata berdasarkan kemiripan semantik menggunakan model embedding."""
+    corpus = list(set(base_list)) # Memastikan kata-kata unik
+    if not corpus:
+        return []
+    
+    corpus_emb = model.encode(corpus, convert_to_tensor=True)
+    new_words = set(corpus)
+    
+    for i, word in enumerate(corpus):
+        query_emb = corpus_emb[i]
+        cos_scores = util.cos_sim(query_emb, corpus_emb)[0]
+        # Ambil top_k+1 hasil untuk menyertakan kata itu sendiri, lalu lewati
+        top_results = torch.topk(cos_scores, k=min(top_k + 1, len(corpus)))
+        for score, idx in zip(top_results[0][1:], top_results[1][1:]):  # lewati kata itu sendiri
+            new_words.add(corpus[idx])
+    return list(new_words)
+
+# --- 5️⃣ Perluasan kata per kategori ---
+def expand_category(base_words, model=None, target_size=1000):
+    """Menggabungkan sinonim WordNet, variasi morfologi, dan perluasan semantik."""
+    expanded = set(base_words)
+    
+    # Langkah 1: Tambah sinonim WordNet
+    current_words_for_synonyms = list(expanded) # Iterasi di atas salinan
+    for word in current_words_for_synonyms:
+        for s in get_synonyms_wordnet(word):
+            expanded.add(s)
+        if len(expanded) >= target_size:
+            break
+            
+    # Langkah 2: Tambah morfologi
+    if len(expanded) < target_size:
+        current_words_to_morph = list(expanded) # Iterasi di atas salinan
+        for word in current_words_to_morph:
+            for var in morphology_variants(word):
+                expanded.add(var)
+            if len(expanded) >= target_size:
+                break
                 
-                full_text = re.sub(r'\s+', ' ', full_text).strip()
-
-                if full_text:
-                    crawled_content = full_text
-
-        except Exception:
-            pass
-
-        return {
-            'crawled_title': crawled_title,
-            'crawled_date': crawled_date,
-            'crawled_content': crawled_content
-        }
-
-    except requests.exceptions.Timeout:
-        return {
-            'crawled_title': 'Gagal diakses (Timeout)',
-            'crawled_date': 'Gagal diakses (Timeout)',
-            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
-        }
-    except requests.exceptions.RequestException as e:
-        return {
-            'crawled_title': 'Gagal diakses',
-            'crawled_date': 'Gagal diakses',
-            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
-        }
-    except Exception as e:
-        return {
-            'crawled_title': 'Kesalahan tak terduga',
-            'crawled_date': 'Kesalahan tak terduga',
-            'crawled_content': f'Kesalahan tak terduga: {e}'
-        }
-
-# --- Fungsi Crawling untuk Detik.com ---
-@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
-def crawl_detik(url):
-    """
-    Mengambil judul, tanggal, dan isi artikel dari URL detik.com.
-    Menambahkan penanganan error dan timeout.
-    """
-    try:
-        req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'}, timeout=10)
-        req.raise_for_status()
-        soup = BeautifulSoup(req.text, 'lxml')
-
-        crawled_title = 'Tidak ada judul'
-        try:
-            title_tag = soup.find('h1', class_='detail__title')
-            if title_tag:
-                crawled_title = title_tag.get_text(strip=True)
-            else:
-                title_tag_fallback = soup.find('title')
-                if title_tag_fallback:
-                    crawled_title = title_tag_fallback.get_text(strip=True)
-        except Exception:
-            pass
-
-        crawled_date = 'Tidak ada tanggal'
-        try:
-            date_tag = soup.find('div', class_='detail__date')
-            if date_tag:
-                crawled_date = date_tag.get_text(strip=True)
-        except Exception:
-            pass
-
-        crawled_content = 'Tidak ada konten'
-        try:
-            content_div = soup.find('div', class_='detail__body-text itp_bodycontent')
-            if content_div:
-                paragraphs = content_div.find_all('p')
-                crawled_content = ' '.join([p.get_text(strip=True) for p in paragraphs])
-            else:
-                content_div_fallback = soup.find('div', class_='read__content')
-                if content_div_fallback:
-                    crawled_content = content_div_fallback.get_text(strip=True)
-        except Exception:
-            pass
-
-        return {
-            'crawled_title': crawled_title,
-            'crawled_date': crawled_date,
-            'crawled_content': crawled_content
-        }
-
-    except requests.exceptions.Timeout:
-        return {
-            'crawled_title': 'Gagal diakses (Timeout)',
-            'crawled_date': 'Gagal diakses (Timeout)',
-            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
-        }
-    except requests.exceptions.RequestException as e:
-        return {
-            'crawled_title': 'Gagal diakses',
-            'crawled_date': 'Gagal diakses',
-            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
-        }
-    except Exception as e:
-        return {
-            'crawled_title': 'Kesalahan tak terduga',
-            'crawled_date': 'Kesalahan tak terduga',
-            'crawled_content': f'Kesalahan tak terduga: {e}'
-        }
-
-
-# --- Konten Utama Aplikasi Streamlit ---
-st.title("Crawling Content dari Berita Online")
-st.write("Pilih website, masukkan URL artikel, dan dapatkan judul, tanggal, serta isi artikel.")
-
-# --- 1. Pilih Website ---
-st.subheader("1. Pilih Website Sumber")
-website_choice = st.selectbox(
-    "Pilih website yang akan di-crawl:",
-    ["Kompas.com", "Tribunnews.com", "Detik.com"]
-)
-
-# --- 2. Input URL ---
-st.subheader("2. Input URL Artikel")
-default_url = ""
-if website_choice == "Kompas.com":
-    default_url = "https://www.kompas.com/global/read/2023/10/26/123456789/peran-indonesia-dalam-penanganan-perubahan-iklim"
-elif website_choice == "Tribunnews.com":
-    default_url = "https://www.tribunnews.com/bisnis/2024/01/15/perusahaan-ini-fokus-pada-energi-terbarukan-untuk-masa-depan"
-elif website_choice == "Detik.com":
-    default_url = "https://www.detik.com/finance/berita-ekonomi-bisnis/d-7000000/pemerintah-dorong-penerapan-tata-kelola-perusahaan-yang-baik"
-
-url_input = st.text_input(f"Masukkan URL artikel dari {website_choice}:", default_url)
-
-# Tombol untuk memulai proses crawling
-if st.button("Mulai Crawling"):
-    if not url_input:
-        st.error("URL tidak boleh kosong. Silakan masukkan URL artikel.")
-        st.stop()
-
-    crawled_data = None
-    with st.spinner(f"Sedang melakukan crawling dari {website_choice}..."):
-        if website_choice == "Kompas.com":
-            crawled_data = crawl_kompas(url_input)
-        elif website_choice == "Tribunnews.com":
-            crawled_data = crawl_tribunnews(url_input)
-        elif website_choice == "Detik.com":
-            crawled_data = crawl_detik(url_input)
+    # Langkah 3: Tambah semantik
+    if len(expanded) < target_size and model is not None:
+        expanded.update(semantic_expand(list(expanded), model))
         
-    if crawled_data:
-        st.subheader("3. Hasil Crawling")
-        st.write(f"**URL Asal:** {url_input}")
-        st.write(f"**Judul:** {crawled_data['crawled_title']}")
-        st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
-        
-        st.markdown("---")
-        st.subheader("Isi Artikel:")
-        st.expander("Klik untuk melihat seluruh isi artikel", expanded=True).write(crawled_data['crawled_content'])
-        
-        # --- Tambahan untuk menyimpan ke session_state ---
-        st.session_state.crawled_content = crawled_data['crawled_content']
-        st.session_state.crawled_title = crawled_data['crawled_title']
-        st.session_state.crawled_date = crawled_data['crawled_date']
-        st.session_state.crawled_url = url_input
-        st.success("Konten berhasil di-crawl dan siap untuk dianalisis! Silakan beralih ke halaman 'Analysis'.")
-        
+    return list(expanded)[:target_size]
+
+# --- 6️⃣ Load model untuk fallback semantik (SentenceTransformer for word expansion) ---
+@st.cache_resource
+def load_semantic_expansion_model():
+    """Memuat model embedding untuk perluasan kata (cached)."""
+    st.info("🔍 Memuat model embedding untuk perluasan kata (asmud/nomic-embed-indonesian)...")
+    # Gunakan folder cache kustom yang dapat ditulis di Streamlit Cloud
+    model_cache_dir = "./.model_cache"
+    os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+    model = SentenceTransformer("asmud/nomic-embed-indonesian", trust_remote_code=True, cache_folder=model_cache_dir)
+    st.success("✅ Model perluasan kata berhasil dimuat!")
+    return model
+
+semantic_expansion_model = load_semantic_expansion_model()
+
+# --- 7️⃣ Perluas semua kategori ---
+st.header("Proses Perluasan Kata Kunci ESG")
+with st.spinner("Memperluas kata kunci Lingkungan..."):
+    env_keywords = expand_category(env_base, model=semantic_expansion_model, target_size=1000)
+    st.write(f"🟢 Kata kunci Environment diperluas menjadi {len(env_keywords)} kata.")
+with st.spinner("Memperluas kata kunci Sosial..."):
+    soc_keywords = expand_category(soc_base, model=semantic_expansion_model, target_size=1000)
+    st.write(f"🟣 Kata kunci Social diperluas menjadi {len(soc_keywords)} kata.")
+with st.spinner("Memperluas kata kunci Tata Kelola..."):
+    gov_keywords = expand_category(gov_base, model=semantic_expansion_model, target_size=1000)
+    st.write(f"🔵 Kata kunci Governance diperluas menjadi {len(gov_keywords)} kata.")
+
+# --- Klasifikasi Cepat via Keyword ---
+def classify_esg_fast(judul):
+    """Mengklasifikasikan judul berdasarkan kata kunci yang diperluas."""
+    j = str(judul).lower()
+    if any(k in j for k in env_keywords):
+        return "Environment"
+    elif any(k in j for k in soc_keywords):
+        return "Social"
+    elif any(k in j for k in gov_keywords):
+        return "Governance"
     else:
-        st.error("Gagal mendapatkan data crawling. Silakan coba URL lain atau periksa koneksi Anda.")
+        return "Non-ESG"
 
-st.markdown("---")
-st.info("Catatan: Fungsi crawling sangat bergantung pada struktur HTML website. Perubahan pada website dapat mempengaruhi hasil crawling.")
+# --- Tata Letak Aplikasi Streamlit ---
+st.title("ESG Screening Tool")
+st.markdown("""
+Aplikasi ini melakukan *screening* tema ESG (Environment, Social, Governance) dari teks
+menggunakan pendekatan berbasis kata kunci yang diperluas dan analisis semantik AI.
+""")
+
+# --- Unggah File Pengguna ---
+uploaded_file = st.file_uploader("Unggah file CSV atau Excel Anda (harus memiliki kolom 'judul')", type=["csv", "xlsx"])
+
+df = None
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        if "judul" not in df.columns:
+            st.error("File yang diunggah harus memiliki kolom bernama 'judul'.")
+            df = None
+        else:
+            st.success("File berhasil diunggah! Menampilkan 5 baris pertama:")
+            st.dataframe(df.head())
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat membaca file: {e}")
+
+if df is not None:
+    st.subheader("1. Klasifikasi Awal Berbasis Kata Kunci")
+    with st.spinner("Menerapkan klasifikasi kata kunci..."):
+        df["Kategori_ESG"] = df["judul"].apply(classify_esg_fast)
+    st.success("Klasifikasi kata kunci selesai!")
+    st.dataframe(df[["judul", "Kategori_ESG"]].head())
+
+    # --- 🧬 5️⃣ Analisis Semantik (AI) ---
+    st.subheader("2. Analisis Semantik Lanjutan (Menggunakan AI)")
+
+    @st.cache_resource
+    def load_indobert_model():
+        """Memuat model embedding IndoBERT (cached)."""
+        st.info("🔍 Memuat model embedding IndoBERT (indobenchmark/indobert-base-p2)...")
+        model_cache_dir = "./.model_cache"
+        os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+        model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
+        st.success("✅ Model IndoBERT berhasil dimuat!")
+        return model
+
+    indobert_model = load_indobert_model()
+
+    themes = {
+        "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
+        "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
+        "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+    }
+
+    with st.spinner("Meng-encode tema ESG..."):
+        theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
+    st.success("Tema ESG berhasil di-encode!")
+
+    with st.spinner("Meng-encode judul berita..."):
+        # Pastikan kolom 'judul' adalah string sebelum encoding
+        judul_embeddings = indobert_model.encode(df["judul"].astype(str).tolist(), batch_size=64, show_progress_bar=False, convert_to_tensor=True)
+    st.success("Judul berita berhasil di-encode!")
+
+    with st.spinner("Menghitung skor kemiripan semantik..."):
+        scores_env = util.cos_sim(judul_embeddings, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
+        scores_soc = util.cos_sim(judul_embeddings, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
+        scores_gov = util.cos_sim(judul_embeddings, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+
+        df["esg_similarity"] = np.max([scores_env, scores_soc, scores_gov], axis=0)
+        best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)
+        df["Prediksi_AI"] = np.select(
+            [best_idx == 0, best_idx == 1, best_idx == 2],
+            ["Environment", "Social", "Governance"],
+            default="Non-ESG" # Default ini akan jarang tercapai karena argmax selalu memilih salah satu
+        )
+    st.success("Skor kemiripan semantik dihitung!")
+    st.dataframe(df[["judul", "Kategori_ESG", "Prediksi_AI", "esg_similarity"]].head())
+
+    # --- 🤖 6️⃣ Terapkan Threshold Otomatis ---
+    st.subheader("3. Penerapan Threshold Otomatis untuk Finalisasi Klasifikasi")
+    threshold = st.slider(
+        "Pilih Threshold Kemiripan Semantik (untuk Non-ESG yang akan di-reklasifikasi oleh AI)",
+        min_value=0.0, max_value=1.0, value=0.45, step=0.01
+    )
+
+    with st.spinner(f"Menerapkan threshold {threshold} untuk finalisasi klasifikasi..."):
+        # Reklasifikasi item yang awalnya "Non-ESG" tetapi memiliki skor semantik tinggi
+        mask_auto = (df["Kategori_ESG"] == "Non-ESG") & (df["esg_similarity"] >= threshold)
+        df.loc[mask_auto, "Kategori_ESG"] = df.loc[mask_auto, "Prediksi_AI"]
+    st.success("Finalisasi klasifikasi selesai!")
+
+    st.subheader("Hasil Klasifikasi ESG Akhir")
+    st.dataframe(df[["judul", "Kategori_ESG", "Prediksi_AI", "esg_similarity"]])
+
