@@ -26,6 +26,7 @@ st.set_page_config(
 # Definisikan jalur kustom untuk data NLTK di dalam direktori aplikasi
 NLTK_DATA_PATH = "./nltk_data"
 # Tambahkan jalur ini ke jalur pencarian data NLTK
+# Ini penting agar NLTK tahu di mana mencari data yang diunduh
 nltk.data.path.append(NLTK_DATA_PATH)
 
 @st.cache_resource
@@ -41,7 +42,8 @@ def load_nltk_data():
         # Periksa dan unduh 'punkt'
         try:
             # Secara eksplisit periksa di jalur kustom kita
-            nltk.data.find('tokenizers/punkt', path=[NLTK_DATA_PATH]) 
+            # PERBAIKAN: Menggunakan 'paths' bukan 'path'
+            nltk.data.find('tokenizers/punkt', paths=[NLTK_DATA_PATH]) 
             st.success("NLTK 'punkt' data sudah ada.")
         except LookupError:
             st.warning("NLTK 'punkt' data tidak ditemukan. Mengunduh...")
@@ -55,7 +57,8 @@ def load_nltk_data():
         # Periksa dan unduh 'stopwords'
         try:
             # Secara eksplisit periksa di jalur kustom kita
-            nltk.data.find('corpora/stopwords', path=[NLTK_DATA_PATH]) 
+            # PERBAIKAN: Menggunakan 'paths' bukan 'path'
+            nltk.data.find('corpora/stopwords', paths=[NLTK_DATA_PATH]) 
             st.success("NLTK 'stopwords' data sudah ada.")
         except LookupError:
             st.warning("NLTK 'stopwords' data tidak ditemukan. Mengunduh...")
