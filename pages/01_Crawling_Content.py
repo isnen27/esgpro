@@ -16,12 +16,12 @@ def download_nltk_data():
     """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada."""
     try:
         nltk.data.find('corpora/wordnet')
-    except nltk.downloader.DownloadError:
+    except LookupError: # Perbaikan di sini
         st.info("📦 Mengunduh data NLTK 'wordnet'...")
         nltk.download('wordnet')
     try:
         nltk.data.find('corpora/omw-1.4')
-    except nltk.downloader.DownloadError:
+    except LookupError: # Perbaikan di sini
         st.info("📦 Mengunduh data NLTK 'omw-1.4' (Open Multilingual Wordnet)...")
         nltk.download('omw-1.4')
     st.success("✅ Data NLTK siap!")
@@ -268,4 +268,3 @@ if df is not None:
 
     st.subheader("Hasil Klasifikasi ESG Akhir")
     st.dataframe(df[["judul", "Kategori_ESG", "Prediksi_AI", "esg_similarity"]])
-
