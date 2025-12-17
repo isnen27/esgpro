@@ -9,10 +9,7 @@ import os
 import re
 import torch
 
-# Untuk TF-IDF Summarization
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import sent_tokenize, word_tokenize
+# Untuk TF-IDF Summarization (tanpa NLTK)
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 # --- Page Configuration ---
@@ -22,60 +19,57 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- NLTK Data Download (Programmatic and Cached) ---
-# Definisikan jalur kustom untuk data NLTK di dalam direktori aplikasi
-NLTK_DATA_PATH = "./nltk_data"
-# Tambahkan jalur ini ke jalur pencarian data NLTK
-# Ini penting agar NLTK tahu di mana mencari data yang diunduh
-nltk.data.path.append(NLTK_DATA_PATH)
-
-@st.cache_resource
-def load_nltk_data():
-    """
-    Downloads NLTK data (punkt and stopwords) to a specified directory
-    if not already present. This function is cached to run only once.
-    """
-    # Pastikan direktori data NLTK kustom ada
-    os.makedirs(NLTK_DATA_PATH, exist_ok=True)
-
-    with st.spinner(f"Memastikan data NLTK tersedia di {NLTK_DATA_PATH}..."):
-        # Periksa dan unduh 'punkt'
-        try:
-            # Secara eksplisit periksa di jalur kustom kita
-            # PERBAIKAN: Menggunakan 'paths' bukan 'path'
-            nltk.data.find('tokenizers/punkt', paths=[NLTK_DATA_PATH]) 
-            st.success("NLTK 'punkt' data sudah ada.")
-        except LookupError:
-            st.warning("NLTK 'punkt' data tidak ditemukan. Mengunduh...")
-            try:
-                nltk.download('punkt', download_dir=NLTK_DATA_PATH)
-                st.success("NLTK 'punkt' data berhasil diunduh.")
-            except Exception as e:
-                st.error(f"Gagal mengunduh NLTK 'punkt' data: {e}")
-                st.stop()
-        
-        # Periksa dan unduh 'stopwords'
-        try:
-            # Secara eksplisit periksa di jalur kustom kita
-            # PERBAIKAN: Menggunakan 'paths' bukan 'path'
-            nltk.data.find('corpora/stopwords', paths=[NLTK_DATA_PATH]) 
-            st.success("NLTK 'stopwords' data sudah ada.")
-        except LookupError:
-            st.warning("NLTK 'stopwords' data tidak ditemukan. Mengunduh...")
-            try:
-                nltk.download('stopwords', download_dir=NLTK_DATA_PATH)
-                st.success("NLTK 'stopwords' data berhasil diunduh.")
-            except Exception as e:
-                st.error(f"Gagal mengunduh NLTK 'stopwords' data: {e}")
-                st.stop()
-    st.success("Semua data NLTK siap!")
-
-# Panggil fungsi pengunduhan NLTK di awal aplikasi
-load_nltk_data()
-
-
 st.title("Analisis Konten Artikel")
 st.write("Halaman ini menampilkan ringkasan teks (TF-IDF), entitas NER (PER, ORG), dan knowledge graph dari konten yang di-crawl.")
+
+# --- Custom Indonesian Stopwords (tanpa NLTK) ---
+# Daftar stopword bahasa Indonesia yang umum
+INDONESIAN_STOPWORDS = [
+    "yang", "untuk", "pada", "ke", "para", "namun", "menurut", "tentang", "dari",
+    "ini", "itu", "dengan", "akan", "atau", "sudah", "juga", "dia", "mereka",
+    "adalah", "dan", "dalam", "bisa", "bahwa", "oleh", "saat", "hal", "tidak",
+    "sebagai", "bagi", "setelah", "sebelum", "serta", "seperti", "bahkan", "pun",
+    "lagi", "hanya", "saja", "karena", "maka", "tetapi", "kemudian", "lalu",
+    "sehingga", "meskipun", "walaupun", "agar", "supaya", "guna", "demi", "tanpa",
+    "atas", "bawah", "depan", "belakang", "antara", "lain", "nya", "kali", "yaitu",
+    "ialah", "yakni", "yaitu", "seperti", "selain", "termasuk", "misalnya", "misal",
+    "contoh", "bukan", "bukanlah", "tiap", "setiap", "seluruh", "semua", "selama",
+    "sejak", "hingga", "sampai", "seusai", "sesuai", "sesudah", "sebelum", "sewaktu",
+    "ketika", "apabila", "jika", "kalau", "andaikata", "andaikan", "umpamanya",
+    "sekiranya", "asal", "asalkan", "biarpun", "meskipun", "walaupun", "bagaimanapun",
+    "bagaimanapun juga", "betapapun", "padahal", "sedangkan", "kendatipun", "sungguhpun",
+    "melainkan", "bahkan", "lagipula", "tambahan pula", "lagi pula", "di samping itu",
+    "selain itu", "malahan", "apalagi", "kecuali", "hanya", "cuma", "melulu", "sekadar",
+    "sekedar", "semata", "semata-mata", "seraya", "sambil", "serta", "demi", "melalui",
+    "lewat", "berkat", "oleh karena", "oleh sebab", "sebab", "karena", "lantaran",
+    "sejak", "semenjak", "sewaktu", "tatkala", "ketika", "sementara", "sambil", "seraya",
+    "selagi", "selama", "sepanjang", "sesudah", "setelah", "sehabis", "seusai", "begitu",
+    "sejak", "semenjak", "sebelum", "hingga", "sampai", "apakah", "siapa", "berapa",
+    "dimana", "kemana", "dari mana", "bilamana", "sejak kapan", "sampai kapan",
+    "mengapa", "bagaimana", "betapa", "apa", "mana", "kapan", "siapa", "mengapa",
+    "bagaimana", "adapun", "andaikata", "ataupun", "bahwasanya", "biarpun", "bilamana",
+    "bukan", "dan", "demikian", "dengan", "di", "dia", "dari", "ini", "itu", "jika",
+    "juga", "kala", "kalau", "kami", "kamu", "karena", "ke", "kemudian", "kita", "lah",
+    "lalu", "maka", "melainkan", "memang", "mereka", "nya", "oleh", "pada", "pula",
+    "pun", "saat", "saja", "sana", "saya", "sebab", "sehingga", "sekalian", "sekalipun",
+    "selagi", "selama", "selanjutnya", "semua", "sementara", "seraya", "serta",
+    "sesudah", "sesungguhnya", "setelah", "seterusnya", "siapa", "sini", "supaya",
+    "tadi", "tanpa", "telah", "tentang", "tersebut", "tetapi", "tiap", "untuk",
+    "yakni", "yaitu", "yang"
+]
+
+# --- Custom Sentence Tokenizer (tanpa NLTK) ---
+def custom_sent_tokenize(text):
+    """
+    Splits text into sentences using a simple regex.
+    This is a basic implementation and might not be as robust as NLTK's.
+    """
+    # Split by periods, question marks, and exclamation marks, followed by whitespace.
+    # Ensure not to split on decimal points or abbreviations (e.g., "Dr.")
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    # Filter out empty strings that might result from splitting
+    return [s.strip() for s in sentences if s.strip()]
+
 
 # --- Model Loading (Cached) ---
 @st.cache_resource
@@ -88,41 +82,50 @@ def load_ner_model():
         ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple", device=0 if torch.cuda.is_available() else -1)
     return ner_pipeline
 
-# --- TF-IDF Summarization Function ---
+# --- TF-IDF Summarization Function (tanpa NLTK) ---
 @st.cache_data
 def get_summary_tfidf(text, num_sentences=5):
-    """Generates a summary of the given text using TF-IDF."""
+    """
+    Generates a summary of the given text using TF-IDF, without NLTK.
+    """
     if not text or len(text.split()) < 50:
         return "Teks terlalu pendek untuk diringkas menggunakan TF-IDF."
 
-    sentences = sent_tokenize(text)
+    sentences = custom_sent_tokenize(text)
     if len(sentences) <= num_sentences:
         return text # Jika jumlah kalimat kurang dari atau sama dengan yang diminta, kembalikan teks asli
 
-    # Inisialisasi TF-IDF Vectorizer
-    stop_words_id = set(stopwords.words('indonesian'))
-    vectorizer = TfidfVectorizer(stop_words=list(stop_words_id))
+    # Inisialisasi TF-IDF Vectorizer dengan stopwords kustom
+    vectorizer = TfidfVectorizer(stop_words=INDONESIAN_STOPWORDS)
 
-    tfidf_matrix = vectorizer.fit_transform(sentences)
+    # Transformasi kalimat menjadi matriks TF-IDF
+    # Jika ada masalah dengan kalimat yang sangat pendek atau kosong, tangani di sini
+    try:
+        tfidf_matrix = vectorizer.fit_transform(sentences)
+    except ValueError: # Menangkap error jika semua kalimat kosong setelah preprocessing
+        return "Gagal membuat ringkasan: Tidak ada konten yang relevan setelah filter."
 
+    # Hitung skor untuk setiap kalimat
     sentence_scores = {}
     for i, sentence in enumerate(sentences):
-        feature_index = [vectorizer.vocabulary_.get(word) for word in word_tokenize(sentence.lower()) if word.isalpha() and word not in stop_words_id]
-        feature_index = [idx for idx in feature_index if idx is not None]
-        
-        if feature_index:
-            score = tfidf_matrix[i, feature_index].sum() / len(feature_index)
+        # Ambil skor TF-IDF rata-rata untuk kalimat tersebut
+        # Jika kalimat tidak memiliki kata yang relevan dengan vocabulary, skornya 0
+        if i < tfidf_matrix.shape[0] and tfidf_matrix[i].nnz > 0: # Cek apakah ada entri non-nol
+            score = tfidf_matrix[i].sum() / tfidf_matrix[i].nnz # Rata-rata TF-IDF dari kata-kata non-nol
             sentence_scores[sentence] = score
         else:
             sentence_scores[sentence] = 0
 
+    # Urutkan kalimat berdasarkan skor dan ambil N teratas
     ranked_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)
     
+    # Ambil kalimat-kalimat teratas dan urutkan kembali sesuai urutan aslinya
     summary_sentences = []
     original_sentence_order = {sentence: i for i, sentence in enumerate(sentences)}
     
     top_sentences = [s[0] for s in ranked_sentences[:num_sentences]]
     
+    # Urutkan kembali berdasarkan kemunculan di teks asli (untuk menjaga koherensi)
     summary_sentences = sorted(top_sentences, key=lambda s: original_sentence_order.get(s, len(sentences)))
 
     return " ".join(summary_sentences)
@@ -135,6 +138,7 @@ def get_ner_entities(text, ner_pipeline):
     if not text:
         return {'PER': [], 'ORG': []}
     
+    # Batasi panjang input untuk NER
     input_text = text[:2000] 
     
     entities = ner_pipeline(input_text)
@@ -167,7 +171,7 @@ def generate_knowledge_graph(text, ner_results):
     for entity in ner_results['ORG']:
         G.add_node(entity, label=entity, group='ORG', title=f"Organisasi: {entity}")
 
-    sentences = sent_tokenize(text)
+    sentences = custom_sent_tokenize(text) # Menggunakan custom_sent_tokenize
 
     for sentence in sentences:
         found_entities_in_sentence = []
