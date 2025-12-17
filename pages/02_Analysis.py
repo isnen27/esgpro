@@ -150,4 +150,3 @@ if st.session_state.crawled_data and st.session_state.final_esg_category:
 else:
     st.warning("Tidak ada data artikel yang tersedia untuk analisis. Silakan kembali ke halaman utama untuk melakukan screening terlebih dahulu.")
     st.info("Gunakan sidebar di kiri untuk navigasi.")
-
