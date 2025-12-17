@@ -16,3 +16,4 @@ lxml
 transformers
 networkx
 pyvis
+einops
