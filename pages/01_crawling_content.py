@@ -21,6 +21,21 @@ from nltk.corpus import wordnet as wn
 # wordnet
 # omw-1.4
 
+# --- Custom Hash Function for SentenceTransformer ---
+# Ini diperlukan karena objek SentenceTransformer tidak secara otomatis hashable
+def _hash_sentence_transformer_model(model):
+    """
+    Fungsi hash kustom untuk objek SentenceTransformer.
+    Menggunakan nama model atau path sebagai hash.
+    """
+    if hasattr(model, '_model_name_or_path') and model._model_name_or_path is not None:
+        return model._model_name_or_path.encode('utf-8')
+    # Fallback jika _model_name_or_path tidak tersedia (jarang untuk SentenceTransformer)
+    raise RuntimeError(f"Cannot hash SentenceTransformer model: {model}. "
+                       "'_model_name_or_path' attribute is missing or None. "
+                       "Consider providing a custom hash_funcs for this type.")
+
+
 # --- Database Kata Dasar ESG ---
 env_base = [
     "environment", "environmental", "green", "eco", "ekologis", "berkelanjutan", "keberlanjutan",
@@ -55,6 +70,7 @@ gov_base = [
 ]
 
 # --- Fungsi Perluasan Kata ---
+# @st.cache_data tidak memerlukan hash_funcs untuk 'word' atau 'lang' karena mereka hashable
 @st.cache_data
 def get_synonyms_wordnet(word, lang='ind'):
     """Mengambil sinonim dari WordNet."""
@@ -64,9 +80,10 @@ def get_synonyms_wordnet(word, lang='ind'):
             for lemma in syn.lemmas(lang):
                 syns.add(lemma.name().replace("_", " "))
     except Exception:
-        pass # Handle case where word not found or lang not supported
+        pass
     return list(syns)
 
+# @st.cache_data tidak memerlukan hash_funcs untuk 'word' karena hashable
 @st.cache_data
 def morphology_variants(word):
     """Menghasilkan varian morfologi sederhana."""
@@ -83,14 +100,14 @@ def morphology_variants(word):
     variants.add(word_lower)
     return list(variants)
 
-@st.cache_data
+# semantic_expand menerima 'model', jadi perlu hash_funcs
+@st.cache_data(hash_funcs={SentenceTransformer: _hash_sentence_transformer_model})
 def semantic_expand(base_list, model, top_k=3):
     """Memperluas daftar kata secara semantik menggunakan embedding similarity."""
     if not base_list:
         return []
-    corpus = list(set(base_list)) # Hapus duplikat dan konversi ke list
+    corpus = list(set(base_list))
     
-    # Hindari encoding jika corpus terlalu besar atau kosong
     if not corpus:
         return []
 
@@ -98,30 +115,24 @@ def semantic_expand(base_list, model, top_k=3):
     new_words = set(corpus)
     for i, word in enumerate(corpus):
         query_emb = corpus_emb[i]
-        # Pastikan query_emb adalah 1D tensor untuk util.cos_sim
-        if query_emb.dim() == 0: # Handle scalar case if it ever happens
-            continue
-        
-        # Reshape query_emb to be 2D if it's 1D
         if query_emb.dim() == 1:
             query_emb = query_emb.unsqueeze(0)
 
         cos_scores = util.cos_sim(query_emb, corpus_emb)[0]
-        # top_k+1 karena hasil pertama adalah kata itu sendiri
         top_results = torch.topk(cos_scores, k=min(top_k + 1, len(corpus)))
-        for score, idx in zip(top_results[0][1:], top_results[1][1:]):  # skip self
+        for score, idx in zip(top_results[0][1:], top_results[1][1:]):
             new_words.add(corpus[idx])
     return list(new_words)
 
-@st.cache_resource
-def expand_category(base_words, model, target_size=100): # Mengurangi target_size default
+# expand_category menerima 'model', jadi perlu hash_funcs
+@st.cache_resource(hash_funcs={SentenceTransformer: _hash_sentence_transformer_model})
+def expand_category(base_words, model, target_size=100):
     """
     Memperluas kategori kata menggunakan sinonim, morfologi, dan semantik.
     Fungsi ini di-cache karena bisa memakan waktu lama.
     """
     expanded = set(base_words)
     
-    # Langkah 1: Tambah sinonim WordNet
     with st.spinner(f"Memperluas {len(base_words)} kata dasar dengan sinonim WordNet..."):
         current_words_to_expand = list(base_words)
         for word in current_words_to_expand:
@@ -130,20 +141,18 @@ def expand_category(base_words, model, target_size=100): # Mengurangi target_siz
             if len(expanded) >= target_size:
                 break
     
-    # Langkah 2: Tambah morfologi
     if len(expanded) < target_size:
         with st.spinner(f"Memperluas {len(expanded)} kata dengan varian morfologi..."):
-            current_words_to_expand = list(expanded) # Ambil yang sudah diperluas
+            current_words_to_expand = list(expanded)
             for word in current_words_to_expand:
                 for var in morphology_variants(word):
                     expanded.add(var)
                 if len(expanded) >= target_size:
                     break
     
-    # Langkah 3: Tambah semantik
     if len(expanded) < target_size and model is not None:
         with st.spinner(f"Memperluas {len(expanded)} kata secara semantik (ini mungkin butuh waktu)..."):
-            expanded.update(semantic_expand(list(expanded), model, top_k=5)) # top_k bisa disesuaikan
+            expanded.update(semantic_expand(list(expanded), model, top_k=5))
             
     return list(expanded)[:target_size]
 
@@ -158,21 +167,19 @@ def load_esg_model():
         model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=cache_dir)
     return model
 
-# --- Cached Expanded Themes Dictionary ---
-@st.cache_resource
+# get_expanded_themes_dict menerima 'model', jadi perlu hash_funcs
+@st.cache_resource(hash_funcs={SentenceTransformer: _hash_sentence_transformer_model})
 def get_expanded_themes_dict(model):
     """
     Mengembangkan daftar kata dasar ESG dan mengembalikannya sebagai kamus tema.
     Fungsi ini di-cache untuk menghindari pemrosesan ulang yang mahal.
     """
     st.info("Memulai proses perluasan database kata ESG (ini hanya akan berjalan sekali)...")
-    # Mengurangi target_size untuk performa yang lebih baik di aplikasi web
     expanded_env = expand_category(env_base, model, target_size=100)
     expanded_soc = expand_category(soc_base, model, target_size=100)
     expanded_gov = expand_category(gov_base, model, target_size=100)
     st.success("Database kata ESG berhasil diperluas!")
 
-    # Gabungkan semua kata yang diperluas ke dalam dictionary themes
     themes = {
         "Environment": expanded_env,
         "Social": expanded_soc,
@@ -194,7 +201,6 @@ website_choice = st.selectbox(
 
 # --- 2. Input URL ---
 st.subheader("2. Input URL untuk Analisis")
-# Contoh URL yang relevan dengan format yang Anda berikan
 default_url = "https://www.kompas.com/global/read/2023/10/26/123456789/peran-indonesia-dalam-penanganan-perubahan-iklim"
 if website_choice == "Tribunnews.com":
     default_url = "https://www.tribunnews.com/bisnis/2024/01/15/perusahaan-ini-fokus-pada-energi-terbarukan-untuk-masa-depan"
@@ -207,10 +213,7 @@ url_input = st.text_input(f"Masukkan URL dari {website_choice} untuk dianalisis:
 def simulate_crawling(url):
     """
     Fungsi dummy untuk mensimulasikan hasil crawling.
-    Ganti dengan logika crawling Anda yang sebenarnya.
-    Seharusnya mengembalikan DataFrame dengan kolom 'link'.
     """
-    # Untuk demonstrasi, kita hanya membuat DataFrame dengan URL input
     return pd.DataFrame({"link": [url]})
 
 # Tombol untuk memulai proses analisis
@@ -219,7 +222,6 @@ if st.button("Mulai Prediksi Tema ESG"):
         st.error("URL tidak boleh kosong. Silakan masukkan URL.")
         st.stop()
 
-    # Simulasi crawling untuk mendapatkan DataFrame awal
     df = simulate_crawling(url_input)
 
     with st.spinner("Mengekstrak judul dari URL..."):
@@ -230,8 +232,8 @@ if st.button("Mulai Prediksi Tema ESG"):
     # --- Analisis Semantik (AI) ---
     st.subheader("3. Hasil Prediksi Tema ESG")
     
-    model = load_esg_model() # Muat model yang di-cache
-    themes = get_expanded_themes_dict(model) # Muat tema yang sudah diperluas dan di-cache
+    model = load_esg_model()
+    themes = get_expanded_themes_dict(model)
 
     with st.spinner("Menghitung embedding judul berita dan analisis kemiripan..."):
         valid_titles_mask = df["judul"].astype(str).str.len() > 0
@@ -248,7 +250,6 @@ if st.button("Mulai Prediksi Tema ESG"):
             scores_soc_full = np.zeros(len(df))
             scores_gov_full = np.zeros(len(df))
 
-            # Encode tema yang diperluas
             theme_embeddings = {k: model.encode(v, convert_to_tensor=True, show_progress_bar=False) for k, v in themes.items()}
 
             scores_env_valid = util.cos_sim(judul_embeddings, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
@@ -267,7 +268,6 @@ if st.button("Mulai Prediksi Tema ESG"):
                 default="Non-ESG"
             )
     
-    # --- Terapkan Threshold Otomatis ---
     threshold = st.slider("Pilih nilai threshold kemiripan (skor di bawah ini akan dianggap 'Non-ESG'):", min_value=0.0, max_value=1.0, value=0.45, step=0.01)
     
     with st.spinner("Menerapkan threshold kemiripan..."):
