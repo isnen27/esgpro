@@ -21,7 +21,7 @@ st.set_page_config(
 st.title("Analisis Konten Artikel")
 st.write("Halaman ini menampilkan ringkasan teks (Frequency Based), entitas NER (PER, ORG), dan knowledge graph.")
 
-# --- Helper Function: Simple Sentence Splitter (Tanpa NLTK) ---
+# --- Helper Function: Simple Sentence Splitter ---
 def simple_sent_tokenize(text):
     """Memecah teks menjadi kalimat menggunakan RegEx sederhana."""
     sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text)
@@ -34,22 +34,13 @@ def simple_word_tokenize(text):
 # --- Model Loading (Cached) ---
 @st.cache_resource
 def load_ner_model():
-    """
-    Loads the NER model for Indonesian.
-    MENGGUNAKAN MODEL 'cahya/bert-base-indonesian-ner' YANG LEBIH STABIL.
-    """
-    # Cek apakah GPU tersedia
+    """Loads the NER model for Indonesian (Cahya)."""
     device = 0 if torch.cuda.is_available() else -1
-    
-    with st.spinner("Memuat model NER... (Mohon tunggu, proses ini cukup berat)"):
-        # MODEL DIGANTI KE YANG LEBIH STABIL
+    with st.spinner("Memuat model NER..."):
         model_name = "cahya/bert-base-indonesian-ner"
-        
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_name)
             model = AutoModelForTokenClassification.from_pretrained(model_name)
-            
-            # aggregation_strategy="simple" sangat penting untuk menggabungkan B-PER dan I-PER menjadi satu entitas
             ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple", device=device)
             return ner_pipeline
         except Exception as e:
@@ -59,99 +50,61 @@ def load_ner_model():
 # --- Frequency-Based Summarization Function ---
 @st.cache_data
 def get_summary_frequency(text, num_sentences=5):
-    """
-    Meringkas teks berdasarkan frekuensi kata (Metode Ringan tanpa Download NLTK).
-    """
-    if not text:
-        return "Tidak ada teks untuk diringkas."
-    
-    # 1. Tokenisasi Kalimat
+    """Meringkas teks berdasarkan frekuensi kata."""
+    if not text: return "Tidak ada teks."
     sentences = simple_sent_tokenize(text)
-    if len(sentences) <= num_sentences:
-        return text
+    if len(sentences) <= num_sentences: return text
 
-    # 2. Hitung Frekuensi Kata
-    stopwords_id = {
-        'yang', 'di', 'dan', 'itu', 'dengan', 'untuk', 'tidak', 'ini', 'dari', 
-        'dalam', 'akan', 'pada', 'juga', 'saya', 'ke', 'karena', 'tersebut', 
-        'bisa', 'ada', 'mereka', 'kata', 'adalah', 'atau', 'saat', 'oleh', 
-        'sudah', 'telah', 'namun', 'tetapi', 'sebagai', 'dia', 'ia', 'bahwa'
-    }
-    
+    stopwords_id = {'yang', 'di', 'dan', 'itu', 'dengan', 'untuk', 'tidak', 'ini', 'dari', 'dalam', 'akan', 'pada', 'juga', 'saya', 'ke', 'karena', 'tersebut', 'bisa', 'ada', 'mereka', 'kata', 'adalah', 'atau', 'saat', 'oleh', 'sudah', 'telah', 'namun', 'tetapi', 'sebagai', 'dia', 'ia', 'bahwa'}
     words = simple_word_tokenize(text)
     clean_words = [w for w in words if w not in stopwords_id and len(w) > 2]
     word_freq = Counter(clean_words)
-    
-    if not word_freq:
-        return text[:500] + "..."
+    if not word_freq: return text[:500] + "..."
 
     max_freq = max(word_freq.values())
-    for word in word_freq:
-        word_freq[word] = word_freq[word] / max_freq
+    for word in word_freq: word_freq[word] = word_freq[word] / max_freq
 
-    # 3. Beri Skor pada Kalimat
     sentence_scores = {}
     for sent in sentences:
         words_in_sent = simple_word_tokenize(sent)
-        word_count_in_sent = len(words_in_sent)
-        
-        if 5 < word_count_in_sent < 100: # Filter kalimat terlalu pendek/panjang
+        if 5 < len(words_in_sent) < 100:
             for word in words_in_sent:
                 if word in word_freq:
-                    if sent not in sentence_scores:
-                        sentence_scores[sent] = word_freq[word]
-                    else:
-                        sentence_scores[sent] += word_freq[word]
+                    sentence_scores[sent] = sentence_scores.get(sent, 0) + word_freq[word]
 
-    # 4. Ambil N kalimat terbaik
     import heapq
     summary_sentences = heapq.nlargest(num_sentences, sentence_scores, key=sentence_scores.get)
-    summary_sentences_sorted = sorted(summary_sentences, key=lambda s: sentences.index(s))
-
-    return " ".join(summary_sentences_sorted)
+    return " ".join(sorted(summary_sentences, key=lambda s: sentences.index(s)))
 
 # --- NER Function ---
 @st.cache_data
 def get_ner_entities(text, _ner_pipeline):
-    """Extracts PER and ORG entities from text."""
-    if not text or _ner_pipeline is None:
-        return {'PER': [], 'ORG': []}
-    
-    # Batasi input text agar memori aman
-    input_text = text[:1500] 
-    
+    """Extracts PER and ORG entities."""
+    if not text or _ner_pipeline is None: return {'PER': [], 'ORG': []}
+    input_text = text[:1500]
     try:
         entities = _ner_pipeline(input_text)
-    except Exception as e:
-        st.warning(f"Error saat ekstraksi NER: {e}")
-        return {'PER': [], 'ORG': []}
+    except Exception: return {'PER': [], 'ORG': []}
     
-    per_entities = []
-    org_entities = []
-    
+    per_entities, org_entities = [], []
     for entity in entities:
-        word = entity['word'].replace('##', '') # Bersihkan token BPE
-        # Model Cahya menggunakan label 'PER' dan 'ORG' (kadang case sensitive tergantung mapping)
-        # aggregation_strategy="simple" biasanya mengembalikan entity_group 'PER', 'ORG', 'LOC'
-        
+        word = entity['word'].replace('##', '')
         group = entity.get('entity_group', entity.get('entity', ''))
-        
-        if group == 'PER' or group == 'B-PER' or group == 'I-PER':
-            if len(word) > 2: per_entities.append(word)
-        elif group == 'ORG' or group == 'B-ORG' or group == 'I-ORG':
-            if len(word) > 2: org_entities.append(word)
+        if 'PER' in group and len(word) > 2: per_entities.append(word)
+        elif 'ORG' in group and len(word) > 2: org_entities.append(word)
             
     return {'PER': sorted(list(set(per_entities))), 'ORG': sorted(list(set(org_entities)))}
 
-# --- Knowledge Graph Generation Function ---
+# --- Knowledge Graph Generation Function (UPDATED) ---
 @st.cache_data
 def generate_knowledge_graph(text, ner_results):
-    """Generates a simple knowledge graph."""
+    """Generates a knowledge graph with white background and visible edge labels."""
     if not text or (not ner_results['PER'] and not ner_results['ORG']):
         return None
 
     G = nx.Graph()
     
+    # Add Nodes
     for entity in ner_results['PER']:
         G.add_node(entity, label=entity, group='PER', title=f"Orang: {entity}")
     for entity in ner_results['ORG']:
@@ -160,10 +113,12 @@ def generate_knowledge_graph(text, ner_results):
     sentences = simple_sent_tokenize(text)
     all_entities = ner_results['PER'] + ner_results['ORG']
 
+    # Create Edges based on co-occurrence
     for sentence in sentences:
         found_entities = []
+        sent_lower = sentence.lower() # Case insensitive check
         for entity in all_entities:
-            if entity in sentence: # Case sensitive check sederhana
+            if entity.lower() in sent_lower:
                 found_entities.append(entity)
         
         for i in range(len(found_entities)):
@@ -171,24 +126,50 @@ def generate_knowledge_graph(text, ner_results):
                 node1 = found_entities[i]
                 node2 = found_entities[j]
                 if node1 != node2:
+                    # UPDATE 1: Menambahkan Label pada Edge NetworkX
                     if G.has_edge(node1, node2):
                         G[node1][node2]['weight'] += 1
+                        # Update label dengan jumlah baru
+                        G[node1][node2]['label'] = f"Bersama ({G[node1][node2]['weight']})"
                     else:
-                        G.add_edge(node1, node2, weight=1)
+                        # Label awal
+                        G.add_edge(node1, node2, weight=1, label="Bersama (1)")
 
     if not G.nodes:
         return None
 
-    net = Network(height="600px", width="100%", bgcolor="#222222", font_color="white")
+    # UPDATE 2: Background Putih & Font Hitam
+    net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="black")
+    
+    # Opsi tambahan agar tampilan di background putih lebih rapi
+    net.set_options("""
+    var options = {
+      "edges": {
+        "color": {"inherit": true},
+        "smooth": false,
+        "font": {"size": 10, "align": "middle"} 
+      },
+      "physics": {
+        "barnesHut": {"gravitationalConstant": -2000, "centralGravity": 0.3, "springLength": 95},
+        "minVelocity": 0.75
+      }
+    }
+    """)
     
     for node in G.nodes(data=True):
-        color = '#FF5733' if node[1].get('group') == 'PER' else '#33FF57'
+        # Menggunakan warna yang lebih gelap agar kontras di background putih
+        color = '#D32F2F' if node[1].get('group') == 'PER' else '#388E3C' # Merah Tua & Hijau Tua
         net.add_node(node[0], label=node[0], title=node[1].get('title'), color=color)
         
     for edge in G.edges(data=True):
-        net.add_edge(edge[0], edge[1], value=edge[2]['weight'])
+        # UPDATE 3: Meneruskan label ke PyVis
+        net.add_edge(
+            edge[0], 
+            edge[1], 
+            value=edge[2]['weight'], 
+            label=edge[2]['label'] # Ini yang memunculkan teks di garis
+        )
 
-    # Simpan di /tmp agar aman di Cloud
     try:
         path = '/tmp'
         if not os.path.exists(path): path = '.' 
@@ -220,7 +201,6 @@ else:
     
     if ner_pipeline:
         ner_entities = get_ner_entities(crawled_content, ner_pipeline)
-        
         c1, c2 = st.columns(2)
         c1.info(f"Orang: {len(ner_entities['PER'])}")
         c1.write(ner_entities['PER'])
@@ -232,4 +212,4 @@ else:
         if kg_html:
             components.html(kg_html, height=600, scrolling=True)
         else:
-            st.write("Belum cukup data untuk graph.")
+            st.write("Belum cukup data hubungan untuk graph.")
