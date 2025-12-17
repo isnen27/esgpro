@@ -565,22 +565,27 @@ if st.session_state.crawled_data is not None and st.session_state.final_esg_cate
             st.session_state.final_esg_category = None
             st.session_state.crawled_url = None
             st.rerun() # Muat ulang halaman untuk memulai dari awal
-    else:
-        st.info("Hasil screening telah disimpan. Anda dapat melanjutkan ke halaman '02_Analysis' melalui sidebar.")
-        
-        if st.session_state.final_esg_category == "Non-ESG":
-            st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
-            if st.button("Selesai (Reset Screening)"):
-                
-                st.session_state.crawled_data = None
-                st.session_state.final_esg_category = None
-                st.session_state.crawled_url = None
-                st.rerun() 
-        else: # Jika kategori bukan Non-ESG (Environment, Social, Governance)
-            st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
-            if st.button("Selesai (Reset Screening)"):
+    elif st.session_state.final_esg_category == "Non-ESG":
+        st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+        st.markdown("Apakah Anda ingin tetap melanjutkan ke analisis detail atau mengakhiri proses?")
+        col1, col2 = st.columns(2)
+        with col1:
+            
+            if st.button("Tetap Lanjutkan ke Analisis"):
+                st.success("Data artikel telah disimpan. Silakan gunakan **sidebar** untuk navigasi ke halaman **'02_Analysis'**.")
+        with col2:
+            if st.button("Selesai"):
                 # Bersihkan session state agar bisa memulai screening baru
                 st.session_state.crawled_data = None
                 st.session_state.final_esg_category = None
                 st.session_state.crawled_url = None
                 st.rerun() 
+    else: 
+        st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+        st.info("Data artikel telah disimpan. Silakan gunakan **sidebar** untuk navigasi ke halaman **'02_Analysis'**.")
+        if st.button("Selesai (Reset Screening)"):
+            # Bersihkan session state agar bisa memulai screening baru
+            st.session_state.crawled_data = None
+            st.session_state.final_esg_category = None
+            st.session_state.crawled_url = None
+            st.rerun()
