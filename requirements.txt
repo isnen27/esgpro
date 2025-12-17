@@ -6,4 +6,4 @@ seaborn
 scikit-learn
 imbalanced-learn
 joblib
-pandas-profiling
+ydata-profiling
