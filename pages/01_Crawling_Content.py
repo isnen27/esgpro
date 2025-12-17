@@ -6,6 +6,9 @@ from sentence_transformers import SentenceTransformer, util
 import nltk
 from nltk.corpus import wordnet as wn
 import os
+import requests # Tambahan
+from bs4 import BeautifulSoup # Tambahan
+import re # Tambahan
 
 # --- Konfigurasi Streamlit ---
 st.set_page_config(layout="wide", page_title="ESG Screening Tool")
@@ -161,6 +164,269 @@ def classify_esg_fast(text_to_classify):
     else:
         return "Non-ESG"
 
+# --- Fungsi Crawling untuk Kompas.com ---
+@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
+def crawl_kompas(url):
+    """
+    Mengambil judul, tanggal, dan isi artikel dari URL Kompas.com (termasuk subdomain).
+    Struktur umum:
+    - Judul: <h1 class="read__title">
+    - Tanggal: <div class="read__time">
+    - Isi artikel: <div class="read__content"> (kemudian mencari <p> di dalamnya)
+    """
+    try:
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/100.0.4896.127 Safari/537.36'
+            )
+        }
+
+        # Ambil halaman dengan timeout 10 detik
+        req = requests.get(url, headers=headers, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, 'lxml')
+
+        # ==========================
+        # 1️⃣ Ambil Judul Artikel
+        # ==========================
+        title_tag = soup.find('h1', class_='read__title')
+        if not title_tag:
+            title_tag = soup.find('h1')  # fallback
+        crawled_title = title_tag.get_text(strip=True) if title_tag else 'Tidak ada judul'
+
+        # ==========================
+        # 2️⃣ Ambil Tanggal Publikasi
+        # ==========================
+        date_tag = soup.find('div', class_='read__time')
+        if not date_tag:
+            date_tag = soup.find('time')
+        crawled_date = date_tag.get_text(strip=True) if date_tag else 'Tidak ada tanggal'
+
+        # ==========================
+        # 3️⃣ Ambil Isi Artikel
+        # ==========================
+        crawled_content = 'Tidak ada konten'
+        full_text = ''
+
+        main_content_div = soup.find('div', class_='read__content')
+
+        if main_content_div:
+            paragraphs = main_content_div.find_all('p')
+            if paragraphs:
+                full_text = ' '.join(p.get_text(strip=True) for p in paragraphs)
+            else:
+                full_text = main_content_div.get_text(separator=' ', strip=True)
+        else:
+            fallback_content_div = (
+                soup.find('div', class_='clearfix') or
+                soup.find('article')
+            )
+            if fallback_content_div:
+                paragraphs = fallback_content_div.find_all('p')
+                if paragraphs:
+                    full_text = ' '.join(p.get_text(strip=True) for p in paragraphs)
+                else:
+                    full_text = fallback_content_div.get_text(separator=' ', strip=True)
+            else:
+                paragraphs = soup.find_all('p')
+                full_text = ' '.join(p.get_text(strip=True) for p in paragraphs) if paragraphs else ''
+
+        # ==========================
+        # 4️⃣ Bersihkan teks
+        # ==========================
+        if full_text:
+            unwanted_patterns = [
+                r'Baca juga :.*', r'Baca Juga :.*', r'Penulis :.*', r'Editor :.*',
+                r'Sumber :.*', r'Ikuti kami.*', r'Simak berita.*', r'Berita Terkait :',
+                r'Lihat Artikel Asli', r'• .*', r'Otomatis Mode Gelap Mode Terang.*',
+                r'Login Gabung KOMPAS.com.*', r'Berikan Masukanmu.*', r'Langganan Kompas.*',
+            ]
+
+            for pattern in unwanted_patterns:
+                full_text = re.sub(pattern, '', full_text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+            full_text = re.sub(r'\s+', ' ', full_text).strip()
+
+            if full_text:
+                crawled_content = full_text
+
+        return {
+            'crawled_title': crawled_title,
+            'crawled_date': crawled_date,
+            'crawled_content': crawled_content
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            'crawled_title': 'Gagal diakses (Timeout)',
+            'crawled_date': 'Gagal diakses (Timeout)',
+            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
+        }
+    except requests.exceptions.RequestException as e:
+        return {
+            'crawled_title': 'Gagal diakses',
+            'crawled_date': 'Gagal diakses',
+            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
+        }
+    except Exception as e:
+        return {
+            'crawled_title': 'Kesalahan tak terduga',
+            'crawled_date': 'Kesalahan tak terduga',
+            'crawled_content': f'Kesalahan tak terduga: {e}'
+        }
+
+# --- Fungsi Crawling untuk Tribunnews.com ---
+@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
+def crawl_tribunnews(url):
+    """
+    Mengambil judul, tanggal, dan isi artikel dari URL tribunnews.com.
+    Menambahkan penanganan error dan timeout.
+    """
+    try:
+        req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'}, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, 'lxml')
+
+        crawled_title = 'Tidak ada judul'
+        try:
+            title_tag = soup.find('h1', class_='f32 ln40 fbo txt-black display-block mt10')
+            if title_tag:
+                crawled_title = title_tag.get_text(strip=True)
+            else:
+                title_tag_fallback = soup.find('title')
+                if title_tag_fallback:
+                    crawled_title = title_tag_fallback.get_text(strip=True)
+        except Exception:
+            pass
+
+        crawled_date = 'Tidak ada tanggal'
+        try:
+            date_tag = soup.find('time')
+            if date_tag:
+                crawled_date = date_tag.get_text(strip=True)
+        except Exception:
+            pass
+
+        crawled_content = 'Tidak ada konten'
+        try:
+            content_div = soup.find('div', class_='side-article txt-article multi-fontsize')
+            if content_div:
+                full_text = content_div.get_text(separator=' ', strip=True)
+
+                unwanted_patterns = [
+                    r'Baca Juga :.*', r'Penulis :.*', r'Editor :.*', r'Sumber :.*',
+                    r'Ikuti kami di Google News', r'Simak berita terbaru Tribunnews.com di Google News',
+                    r'Berita Terkait :', r'Baca juga :', r'Lihat Artikel Asli', r'• .*',
+                ]
+
+                for pattern in unwanted_patterns:
+                    full_text = re.sub(pattern, '', full_text, flags=re.DOTALL | re.IGNORECASE).strip()
+                
+                full_text = re.sub(r'\s+', ' ', full_text).strip()
+
+                if full_text:
+                    crawled_content = full_text
+
+        except Exception:
+            pass
+
+        return {
+            'crawled_title': crawled_title,
+            'crawled_date': crawled_date,
+            'crawled_content': crawled_content
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            'crawled_title': 'Gagal diakses (Timeout)',
+            'crawled_date': 'Gagal diakses (Timeout)',
+            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
+        }
+    except requests.exceptions.RequestException as e:
+        return {
+            'crawled_title': 'Gagal diakses',
+            'crawled_date': 'Gagal diakses',
+            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
+        }
+    except Exception as e:
+        return {
+            'crawled_title': 'Kesalahan tak terduga',
+            'crawled_date': 'Kesalahan tak terduga',
+            'crawled_content': f'Kesalahan tak terduga: {e}'
+        }
+
+# --- Fungsi Crawling untuk Detik.com ---
+@st.cache_data(ttl=3600) # Cache hasil crawling selama 1 jam
+def crawl_detik(url):
+    """
+    Mengambil judul, tanggal, dan isi artikel dari URL detik.com.
+    Menambahkan penanganan error dan timeout.
+    """
+    try:
+        req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36'}, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, 'lxml')
+
+        crawled_title = 'Tidak ada judul'
+        try:
+            title_tag = soup.find('h1', class_='detail__title')
+            if title_tag:
+                crawled_title = title_tag.get_text(strip=True)
+            else:
+                title_tag_fallback = soup.find('title')
+                if title_tag_fallback:
+                    crawled_title = title_tag_fallback.get_text(strip=True)
+        except Exception:
+            pass
+
+        crawled_date = 'Tidak ada tanggal'
+        try:
+            date_tag = soup.find('div', class_='detail__date')
+            if date_tag:
+                crawled_date = date_tag.get_text(strip=True)
+        except Exception:
+            pass
+
+        crawled_content = 'Tidak ada konten'
+        try:
+            content_div = soup.find('div', class_='detail__body-text itp_bodycontent')
+            if content_div:
+                paragraphs = content_div.find_all('p')
+                crawled_content = ' '.join([p.get_text(strip=True) for p in paragraphs])
+            else:
+                content_div_fallback = soup.find('div', class_='read__content')
+                if content_div_fallback:
+                    crawled_content = content_div_fallback.get_text(strip=True)
+        except Exception:
+            pass
+
+        return {
+            'crawled_title': crawled_title,
+            'crawled_date': crawled_date,
+            'crawled_content': crawled_content
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            'crawled_title': 'Gagal diakses (Timeout)',
+            'crawled_date': 'Gagal diakses (Timeout)',
+            'crawled_content': f'Gagal diakses karena timeout setelah 10 detik: {url}'
+        }
+    except requests.exceptions.RequestException as e:
+        return {
+            'crawled_title': 'Gagal diakses',
+            'crawled_date': 'Gagal diakses',
+            'crawled_content': f'Gagal diakses karena kesalahan permintaan: {e}'
+        }
+    except Exception as e:
+        return {
+            'crawled_title': 'Kesalahan tak terduga',
+            'crawled_date': 'Kesalahan tak terduga',
+            'crawled_content': f'Kesalahan tak terduga: {e}'
+        }
+
 # --- Tata Letak Aplikasi Streamlit ---
 st.title("ESG Screening Tool")
 st.markdown("""
@@ -168,102 +434,111 @@ Aplikasi ini melakukan *screening* tema ESG (Environment, Social, Governance) da
 menggunakan pendekatan berbasis kata kunci yang diperluas dan analisis semantik AI.
 """)
 
-st.subheader("Input Artikel untuk Screening ESG")
-
-st.info("""
-**Catatan Penting:** Aplikasi ini tidak dapat melakukan *web crawling* secara langsung dari Streamlit Community Cloud
-karena keterbatasan akses ke API eksternal dan pustaka *web scraping*.
-Untuk melakukan *screening*, mohon **paste judul artikel (atau potongan teks relevan)** yang Anda dapatkan
-dari hasil *crawling* Anda sendiri.
-""")
+st.subheader("Input URL Artikel untuk Screening ESG")
 
 website_choice = st.radio(
-    "Pilih website (untuk referensi, tidak fungsional untuk crawling di aplikasi ini):",
+    "Pilih website sumber artikel:",
     ("Kompas.com", "Tribunnews.com", "Detik.com")
 )
 
-user_url_input = st.text_input("URL Artikel (untuk referensi, tidak fungsional untuk crawling di aplikasi ini):")
+user_url_input = st.text_input("Masukkan URL Artikel di sini:")
 
-crawled_title_input = st.text_area(
-    "Paste Judul Artikel (atau potongan teks relevan) di sini:",
-    height=100,
-    placeholder="Contoh: Pertamina Patra Niaga Raih Penghargaan ESG Terbaik di Asia"
-)
-
-if st.button("Mulai Screening ESG"):
-    if not crawled_title_input:
-        st.warning("Mohon paste judul artikel atau teks untuk memulai screening.")
+if st.button("Crawl dan Lakukan Screening ESG"):
+    if not user_url_input:
+        st.warning("Mohon masukkan URL artikel untuk memulai screening.")
     else:
-        st.subheader("Hasil Screening ESG")
+        st.subheader("Hasil Crawling dan Screening ESG")
 
-        # 1. Klasifikasi Awal Berbasis Kata Kunci
-        st.write("---")
-        st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
-        with st.spinner("Menerapkan klasifikasi kata kunci..."):
-            esg_keyword_category = classify_esg_fast(crawled_title_input)
-        st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
+        crawled_data = None
+        with st.spinner(f"Melakukan crawling dari {website_choice} ({user_url_input})..."):
+            if website_choice == "Kompas.com":
+                crawled_data = crawl_kompas(user_url_input)
+            elif website_choice == "Tribunnews.com":
+                crawled_data = crawl_tribunnews(user_url_input)
+            elif website_choice == "Detik.com":
+                crawled_data = crawl_detik(user_url_input)
+            else:
+                st.error("Pilihan website tidak valid.")
+                crawled_data = {'crawled_title': 'Error', 'crawled_date': 'Error', 'crawled_content': 'Pilihan website tidak valid.'}
 
-        # 2. Analisis Semantik Lanjutan (Menggunakan AI)
-        st.write("---")
-        st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
+        if crawled_data['crawled_title'].startswith('Gagal diakses') or crawled_data['crawled_title'].startswith('Kesalahan tak terduga'):
+            st.error(f"Gagal melakukan crawling: {crawled_data['crawled_title']}")
+            st.write(f"Detail: {crawled_data['crawled_content']}")
+        else:
+            st.success("Crawling berhasil!")
+            st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
+            st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
+            # st.expander("Lihat Isi Artikel Lengkap").write(crawled_data['crawled_content']) # Opsional: tampilkan konten lengkap
 
-        @st.cache_resource
-        def load_indobert_model():
-            """Memuat model embedding IndoBERT (cached)."""
-            model_cache_dir = "./.model_cache"
-            os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
-            model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
-            return model
+            crawled_title_for_screening = crawled_data['crawled_title']
 
-        indobert_model = load_indobert_model()
+            # 1. Klasifikasi Awal Berbasis Kata Kunci
+            st.write("---")
+            st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
+            with st.spinner("Menerapkan klasifikasi kata kunci..."):
+                esg_keyword_category = classify_esg_fast(crawled_title_for_screening)
+            st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
 
-        themes = {
-            "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
-            "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
-            "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
-        }
+            # 2. Analisis Semantik Lanjutan (Menggunakan AI)
+            st.write("---")
+            st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
 
-        # Theme embeddings are loaded once due to @st.cache_resource
-        theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
+            @st.cache_resource
+            def load_indobert_model():
+                """Memuat model embedding IndoBERT (cached)."""
+                model_cache_dir = "./.model_cache"
+                os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+                model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
+                return model
 
-        with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
-            title_embedding = indobert_model.encode(crawled_title_input, convert_to_tensor=True).unsqueeze(0) # Add batch dimension
-        
-        with st.spinner("Menghitung skor kemiripan semantik..."):
-            scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
-            scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
-            scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+            indobert_model = load_indobert_model()
 
-            esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
-            best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
-            prediksi_ai = np.select(
-                [best_idx == 0, best_idx == 1, best_idx == 2],
-                ["Environment", "Social", "Governance"],
-                default="Non-ESG"
+            themes = {
+                "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
+                "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
+                "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+            }
+
+            theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
+
+            with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
+                title_embedding = indobert_model.encode(crawled_title_for_screening, convert_to_tensor=True).unsqueeze(0)
+            
+            with st.spinner("Menghitung skor kemiripan semantik..."):
+                scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
+                scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
+                scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+
+                esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
+                best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
+                prediksi_ai = np.select(
+                    [best_idx == 0, best_idx == 1, best_idx == 2],
+                    ["Environment", "Social", "Governance"],
+                    default="Non-ESG"
+                )
+            st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
+
+            # 3. Penerapan Threshold Otomatis
+            st.write("---")
+            st.markdown("#### 3. Finalisasi Klasifikasi")
+            threshold = st.slider(
+                "Pilih Threshold Kemiripan Semantik (untuk Non-ESG yang akan di-reklasifikasi oleh AI)",
+                min_value=0.0, max_value=1.0, value=0.45, step=0.01, key="final_threshold_single"
             )
-        st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
 
-        # 3. Penerapan Threshold Otomatis
-        st.write("---")
-        st.markdown("#### 3. Finalisasi Klasifikasi")
-        threshold = st.slider(
-            "Pilih Threshold Kemiripan Semantik (untuk Non-ESG yang akan di-reklasifikasi oleh AI)",
-            min_value=0.0, max_value=1.0, value=0.45, step=0.01, key="final_threshold_single"
-        )
+            final_esg_category = esg_keyword_category
+            if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
+                final_esg_category = prediksi_ai
+                st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
+            elif final_esg_category != "Non-ESG":
+                st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
+            else:
+                st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
 
-        final_esg_category = esg_keyword_category
-        if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
-            final_esg_category = prediksi_ai
-            st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
-        elif final_esg_category != "Non-ESG":
-            st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
-        else:
-            st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
+            st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
 
-        st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
-
-        # Jika kategori akhir adalah Non-ESG, proses tidak dilanjutkan
-        if final_esg_category == "Non-ESG":
-            st.warning("Proses tidak dilanjutkan karena diklasifikasikan sebagai Non-ESG.")
-        else:
-            st.success("Proses dapat dilanjutkan karena diklasifikasikan sebagai ESG.")
+            # Jika kategori akhir adalah Non-ESG, proses tidak dilanjutkan
+            if final_esg_category == "Non-ESG":
+                st.warning("Proses tidak dilanjutkan karena diklasifikasikan sebagai Non-ESG.")
+            else:
+                st.success("Proses dapat dilanjutkan karena diklasifikasikan sebagai ESG.")
