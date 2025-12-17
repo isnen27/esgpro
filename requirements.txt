@@ -8,6 +8,7 @@ imbalanced-learn
 joblib
 ydata-profiling
 torch
+tqdm
 sentence-transformers
 nltk
 requests
@@ -17,3 +18,4 @@ transformers
 networkx
 pyvis
 einops
+
