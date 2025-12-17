@@ -317,6 +317,14 @@ if st.button("Mulai Crawling"):
         st.markdown("---")
         st.subheader("Isi Artikel:")
         st.expander("Klik untuk melihat seluruh isi artikel", expanded=True).write(crawled_data['crawled_content'])
+        
+        # --- Tambahan untuk menyimpan ke session_state ---
+        st.session_state.crawled_content = crawled_data['crawled_content']
+        st.session_state.crawled_title = crawled_data['crawled_title']
+        st.session_state.crawled_date = crawled_data['crawled_date']
+        st.session_state.crawled_url = url_input
+        st.success("Konten berhasil di-crawl dan siap untuk dianalisis! Silakan beralih ke halaman 'Analysis'.")
+        
     else:
         st.error("Gagal mendapatkan data crawling. Silakan coba URL lain atau periksa koneksi Anda.")
 
