@@ -10,7 +10,7 @@ import string
 import heapq
 import os
 import pickle
-from nltk.tokenize.punkt import PunktSentenceTokenizer
+from nltk.tokenize.punkt import PunktSentenceTokenizer # Impor kelas ini secara spesifik
 
 st.set_page_config(layout="wide", page_title="ESG Analysis")
 st.title("ESG Analysis Page")
@@ -26,29 +26,32 @@ def download_nltk_data_for_analysis():
         nltk.data.path.append(nltk_data_dir)
     os.makedirs(nltk_data_dir, exist_ok=True)
 
+    # List of NLTK resources to download
     resources = {
-        'punkt': 'tokenizers/punkt',
+        'punkt': 'tokenizers/punkt', # Ini mengunduh direktori 'punkt' yang berisi pickle bahasa
         'stopwords': 'corpora/stopwords',
         'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
         'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
-        'words': 'corpora/words',
+        'words': 'corpora/words', # Diperlukan oleh maxent_ne_chunker
     }
 
     for resource_name, resource_path in resources.items():
         try:
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True)
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # Tambahkan quiet=True
 
     # --- Explicitly load Indonesian PunktSentenceTokenizer ---
     try:
-        indonesian_punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt', 'indonesian.pickle')
-        if os.path.exists(indonesian_punkt_path):
-            with open(indonesian_punkt_path, 'rb') as f:
-                st.session_state._indonesian_punkt_tokenizer = pickle.load(f)
-        else:
-            st.error(f"Indonesian Punkt tokenizer pickle not found at {indonesian_punkt_path} after 'punkt' download. Sentence tokenization for Indonesian might fail.")
-            st.session_state._indonesian_punkt_tokenizer = None
+        # Gunakan nltk.data.find untuk menemukan jalur aktual dari indonesian.pickle
+        # Ini lebih andal karena NLTK tahu di mana ia menyimpannya
+        indonesian_punkt_file = nltk.data.find('tokenizers/punkt/indonesian.pickle', paths=[nltk_data_dir])
+        with open(indonesian_punkt_file, 'rb') as f:
+            st.session_state._indonesian_punkt_tokenizer = pickle.load(f)
+        st.success("Indonesian Punkt tokenizer loaded successfully.") # Pesan sukses ini bisa dihapus jika benar-benar tidak ingin ada notifikasi
+    except LookupError:
+        st.error("Indonesian Punkt tokenizer pickle not found after 'punkt' download. Sentence tokenization for Indonesian might fail.")
+        st.session_state._indonesian_punkt_tokenizer = None
     except Exception as e:
         st.error(f"Error loading Indonesian Punkt tokenizer: {e}. Sentence tokenization for Indonesian might fail.")
         st.session_state._indonesian_punkt_tokenizer = None
@@ -60,33 +63,42 @@ def summarize_text_tfidf(text, num_sentences=5):
     if not text or len(text.strip()) == 0:
         return "Tidak ada konten untuk diringkas."
 
+    # Gunakan tokenizer yang sudah dimuat dari session_state
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
+        # Fallback ke tokenizer generik (default English) jika yang spesifik Indonesia gagal
         st.warning("Menggunakan sentence tokenizer generik karena yang spesifik Indonesia tidak tersedia. Akurasi mungkin terpengaruh.")
-        sentences = nltk.sent_tokenize(text)
+        sentences = nltk.sent_tokenize(text) # Tanpa argumen 'language'
 
     if len(sentences) <= num_sentences:
-        return text
+        return text # Jika teks pendek, kembalikan seluruh teks
 
     stop_words_id = set(stopwords.words('indonesian'))
     
     def preprocess(sentence):
-        words = word_tokenize(sentence.lower())
+        # Gunakan word_tokenize generik (default English). Ini adalah kompromi.
+        # Untuk TF-IDF, ini mungkin cukup, tetapi tidak ideal untuk Bahasa Indonesia.
+        words = word_tokenize(sentence.lower()) # Tanpa argumen 'language'
+        # Filter kata-kata non-alfanumerik dan stopwords
         return [word for word in words if word.isalnum() and word not in stop_words_id]
 
     vectorizer = TfidfVectorizer(tokenizer=preprocess, stop_words=list(stop_words_id))
     
     try:
         tfidf_matrix = vectorizer.fit_transform(sentences)
-    except ValueError:
+    except ValueError: # Tangani kosakata kosong jika teks terlalu pendek atau semua stopwords
         return "Tidak dapat meringkas. Konten mungkin terlalu pendek atau tidak relevan."
 
+    # Hitung skor untuk setiap kalimat
     sentence_scores = {}
     for i, sentence in enumerate(sentences):
+        # Jumlahkan skor TF-IDF kata-kata dalam kalimat
         score = tfidf_matrix[i].sum() 
         sentence_scores[sentence] = score
 
+    # Ambil N kalimat teratas
+    # Gunakan heapq.nlargest untuk efisiensi
     best_sentences = heapq.nlargest(num_sentences, sentence_scores, key=sentence_scores.get)
     
     return ' '.join(best_sentences)
@@ -96,17 +108,23 @@ def perform_ner_nltk(text):
     if not text or len(text.strip()) == 0:
         return []
 
+    # Tokenisasi kalimat terlebih dahulu menggunakan tokenizer yang sudah dimuat
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
         st.warning("Menggunakan sentence tokenizer generik untuk NER karena yang spesifik Indonesia tidak tersedia. Akurasi mungkin terpengaruh.")
-        sentences = nltk.sent_tokenize(text)
+        sentences = nltk.sent_tokenize(text) # Tanpa argumen 'language'
 
     all_named_entities = []
     for sentence in sentences:
+        # Tokenisasi kata dan POS tagging per kalimat
+        # Penting: NLTK's ne_chunk dilatih dengan tag POS bahasa Inggris.
+        # Menggunakan word_tokenize(..., language='english') dan pos_tag(..., lang='eng')
+        # akan memberikan hasil yang lebih baik dengan ne_chunk meskipun teksnya Bahasa Indonesia.
         words = word_tokenize(sentence, language='english') 
-        tagged_words = pos_tag(words, lang='eng')
+        tagged_words = pos_tag(words, lang='eng') # Explicitly use English POS tagger
 
+        # Named Entity Chunking
         tree = ne_chunk(tagged_words) 
 
         for subtree in tree.subtrees():
@@ -123,7 +141,7 @@ if st.session_state.crawled_data and st.session_state.final_esg_category:
     
     crawled_url = st.session_state.crawled_url
     crawled_title = st.session_state.crawled_data['crawled_title']
-    crawled_date = st.session_state.crawled_data['crawled_date'] # <--- BARIS INI YANG DIPERBAIKI
+    crawled_date = st.session_state.crawled_data['crawled_date']
     crawled_content = st.session_state.crawled_data['crawled_content']
     final_esg_category = st.session_state.final_esg_category
 
