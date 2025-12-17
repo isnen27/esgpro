@@ -1,2 +1,0 @@
-# esgpro
-ESG Sentiment Analysis
