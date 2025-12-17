@@ -16,15 +16,12 @@ def download_nltk_data():
     """Mengunduh data NLTK yang diperlukan (WordNet dan OMW) jika belum ada."""
     try:
         nltk.data.find('corpora/wordnet')
-    except LookupError: # Perbaikan di sini
-        st.info("📦 Mengunduh data NLTK 'wordnet'...")
+    except LookupError:
         nltk.download('wordnet')
     try:
         nltk.data.find('corpora/omw-1.4')
-    except LookupError: # Perbaikan di sini
-        st.info("📦 Mengunduh data NLTK 'omw-1.4' (Open Multilingual Wordnet)...")
+    except LookupError:
         nltk.download('omw-1.4')
-    st.success("✅ Data NLTK siap!")
 
 download_nltk_data()
 
@@ -139,32 +136,22 @@ def expand_category(base_words, model=None, target_size=1000):
 @st.cache_resource
 def load_semantic_expansion_model():
     """Memuat model embedding untuk perluasan kata (cached)."""
-    st.info("🔍 Memuat model embedding untuk perluasan kata (asmud/nomic-embed-indonesian)...")
-    # Gunakan folder cache kustom yang dapat ditulis di Streamlit Cloud
     model_cache_dir = "./.model_cache"
     os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
     model = SentenceTransformer("asmud/nomic-embed-indonesian", trust_remote_code=True, cache_folder=model_cache_dir)
-    st.success("✅ Model perluasan kata berhasil dimuat!")
     return model
 
 semantic_expansion_model = load_semantic_expansion_model()
 
 # --- 7️⃣ Perluas semua kategori ---
-st.header("Proses Perluasan Kata Kunci ESG")
-with st.spinner("Memperluas kata kunci Lingkungan..."):
-    env_keywords = expand_category(env_base, model=semantic_expansion_model, target_size=1000)
-    st.write(f"🟢 Kata kunci Environment diperluas menjadi {len(env_keywords)} kata.")
-with st.spinner("Memperluas kata kunci Sosial..."):
-    soc_keywords = expand_category(soc_base, model=semantic_expansion_model, target_size=1000)
-    st.write(f"🟣 Kata kunci Social diperluas menjadi {len(soc_keywords)} kata.")
-with st.spinner("Memperluas kata kunci Tata Kelola..."):
-    gov_keywords = expand_category(gov_base, model=semantic_expansion_model, target_size=1000)
-    st.write(f"🔵 Kata kunci Governance diperluas menjadi {len(gov_keywords)} kata.")
+env_keywords = expand_category(env_base, model=semantic_expansion_model, target_size=1000)
+soc_keywords = expand_category(soc_base, model=semantic_expansion_model, target_size=1000)
+gov_keywords = expand_category(gov_base, model=semantic_expansion_model, target_size=1000)
 
 # --- Klasifikasi Cepat via Keyword ---
-def classify_esg_fast(judul):
-    """Mengklasifikasikan judul berdasarkan kata kunci yang diperluas."""
-    j = str(judul).lower()
+def classify_esg_fast(text_to_classify):
+    """Mengklasifikasikan teks berdasarkan kata kunci yang diperluas."""
+    j = str(text_to_classify).lower()
     if any(k in j for k in env_keywords):
         return "Environment"
     elif any(k in j for k in soc_keywords):
@@ -181,90 +168,102 @@ Aplikasi ini melakukan *screening* tema ESG (Environment, Social, Governance) da
 menggunakan pendekatan berbasis kata kunci yang diperluas dan analisis semantik AI.
 """)
 
-# --- Unggah File Pengguna ---
-uploaded_file = st.file_uploader("Unggah file CSV atau Excel Anda (harus memiliki kolom 'judul')", type=["csv", "xlsx"])
+st.subheader("Input Artikel untuk Screening ESG")
 
-df = None
-if uploaded_file is not None:
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
+st.info("""
+**Catatan Penting:** Aplikasi ini tidak dapat melakukan *web crawling* secara langsung dari Streamlit Community Cloud
+karena keterbatasan akses ke API eksternal dan pustaka *web scraping*.
+Untuk melakukan *screening*, mohon **paste judul artikel (atau potongan teks relevan)** yang Anda dapatkan
+dari hasil *crawling* Anda sendiri.
+""")
 
-        if "judul" not in df.columns:
-            st.error("File yang diunggah harus memiliki kolom bernama 'judul'.")
-            df = None
-        else:
-            st.success("File berhasil diunggah! Menampilkan 5 baris pertama:")
-            st.dataframe(df.head())
-    except Exception as e:
-        st.error(f"Terjadi kesalahan saat membaca file: {e}")
+website_choice = st.radio(
+    "Pilih website (untuk referensi, tidak fungsional untuk crawling di aplikasi ini):",
+    ("Kompas.com", "Tribunnews.com", "Detik.com")
+)
 
-if df is not None:
-    st.subheader("1. Klasifikasi Awal Berbasis Kata Kunci")
-    with st.spinner("Menerapkan klasifikasi kata kunci..."):
-        df["Kategori_ESG"] = df["judul"].apply(classify_esg_fast)
-    st.success("Klasifikasi kata kunci selesai!")
-    st.dataframe(df[["judul", "Kategori_ESG"]].head())
+user_url_input = st.text_input("URL Artikel (untuk referensi, tidak fungsional untuk crawling di aplikasi ini):")
 
-    # --- 🧬 5️⃣ Analisis Semantik (AI) ---
-    st.subheader("2. Analisis Semantik Lanjutan (Menggunakan AI)")
+crawled_title_input = st.text_area(
+    "Paste Judul Artikel (atau potongan teks relevan) di sini:",
+    height=100,
+    placeholder="Contoh: Pertamina Patra Niaga Raih Penghargaan ESG Terbaik di Asia"
+)
 
-    @st.cache_resource
-    def load_indobert_model():
-        """Memuat model embedding IndoBERT (cached)."""
-        st.info("🔍 Memuat model embedding IndoBERT (indobenchmark/indobert-base-p2)...")
-        model_cache_dir = "./.model_cache"
-        os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
-        model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
-        st.success("✅ Model IndoBERT berhasil dimuat!")
-        return model
+if st.button("Mulai Screening ESG"):
+    if not crawled_title_input:
+        st.warning("Mohon paste judul artikel atau teks untuk memulai screening.")
+    else:
+        st.subheader("Hasil Screening ESG")
 
-    indobert_model = load_indobert_model()
+        # 1. Klasifikasi Awal Berbasis Kata Kunci
+        st.write("---")
+        st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
+        with st.spinner("Menerapkan klasifikasi kata kunci..."):
+            esg_keyword_category = classify_esg_fast(crawled_title_input)
+        st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
 
-    themes = {
-        "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
-        "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
-        "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
-    }
+        # 2. Analisis Semantik Lanjutan (Menggunakan AI)
+        st.write("---")
+        st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
 
-    with st.spinner("Meng-encode tema ESG..."):
+        @st.cache_resource
+        def load_indobert_model():
+            """Memuat model embedding IndoBERT (cached)."""
+            model_cache_dir = "./.model_cache"
+            os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+            model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
+            return model
+
+        indobert_model = load_indobert_model()
+
+        themes = {
+            "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
+            "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
+            "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+        }
+
+        # Theme embeddings are loaded once due to @st.cache_resource
         theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
-    st.success("Tema ESG berhasil di-encode!")
 
-    with st.spinner("Meng-encode judul berita..."):
-        # Pastikan kolom 'judul' adalah string sebelum encoding
-        judul_embeddings = indobert_model.encode(df["judul"].astype(str).tolist(), batch_size=64, show_progress_bar=False, convert_to_tensor=True)
-    st.success("Judul berita berhasil di-encode!")
+        with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
+            title_embedding = indobert_model.encode(crawled_title_input, convert_to_tensor=True).unsqueeze(0) # Add batch dimension
+        
+        with st.spinner("Menghitung skor kemiripan semantik..."):
+            scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
+            scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
+            scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
 
-    with st.spinner("Menghitung skor kemiripan semantik..."):
-        scores_env = util.cos_sim(judul_embeddings, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
-        scores_soc = util.cos_sim(judul_embeddings, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
-        scores_gov = util.cos_sim(judul_embeddings, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+            esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
+            best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
+            prediksi_ai = np.select(
+                [best_idx == 0, best_idx == 1, best_idx == 2],
+                ["Environment", "Social", "Governance"],
+                default="Non-ESG"
+            )
+        st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
 
-        df["esg_similarity"] = np.max([scores_env, scores_soc, scores_gov], axis=0)
-        best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)
-        df["Prediksi_AI"] = np.select(
-            [best_idx == 0, best_idx == 1, best_idx == 2],
-            ["Environment", "Social", "Governance"],
-            default="Non-ESG" # Default ini akan jarang tercapai karena argmax selalu memilih salah satu
+        # 3. Penerapan Threshold Otomatis
+        st.write("---")
+        st.markdown("#### 3. Finalisasi Klasifikasi")
+        threshold = st.slider(
+            "Pilih Threshold Kemiripan Semantik (untuk Non-ESG yang akan di-reklasifikasi oleh AI)",
+            min_value=0.0, max_value=1.0, value=0.45, step=0.01, key="final_threshold_single"
         )
-    st.success("Skor kemiripan semantik dihitung!")
-    st.dataframe(df[["judul", "Kategori_ESG", "Prediksi_AI", "esg_similarity"]].head())
 
-    # --- 🤖 6️⃣ Terapkan Threshold Otomatis ---
-    st.subheader("3. Penerapan Threshold Otomatis untuk Finalisasi Klasifikasi")
-    threshold = st.slider(
-        "Pilih Threshold Kemiripan Semantik (untuk Non-ESG yang akan di-reklasifikasi oleh AI)",
-        min_value=0.0, max_value=1.0, value=0.45, step=0.01
-    )
+        final_esg_category = esg_keyword_category
+        if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
+            final_esg_category = prediksi_ai
+            st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
+        elif final_esg_category != "Non-ESG":
+            st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
+        else:
+            st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
 
-    with st.spinner(f"Menerapkan threshold {threshold} untuk finalisasi klasifikasi..."):
-        # Reklasifikasi item yang awalnya "Non-ESG" tetapi memiliki skor semantik tinggi
-        mask_auto = (df["Kategori_ESG"] == "Non-ESG") & (df["esg_similarity"] >= threshold)
-        df.loc[mask_auto, "Kategori_ESG"] = df.loc[mask_auto, "Prediksi_AI"]
-    st.success("Finalisasi klasifikasi selesai!")
+        st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
 
-    st.subheader("Hasil Klasifikasi ESG Akhir")
-    st.dataframe(df[["judul", "Kategori_ESG", "Prediksi_AI", "esg_similarity"]])
+        # Jika kategori akhir adalah Non-ESG, proses tidak dilanjutkan
+        if final_esg_category == "Non-ESG":
+            st.warning("Proses tidak dilanjutkan karena diklasifikasikan sebagai Non-ESG.")
+        else:
+            st.success("Proses dapat dilanjutkan karena diklasifikasikan sebagai ESG.")
