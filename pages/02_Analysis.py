@@ -2,7 +2,7 @@
 import streamlit as st
 import nltk
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
+from nltk.tokenize import word_tokenize # Keep for NER (will try to use English Punkt)
 from nltk.tag import pos_tag
 from nltk.chunk import ne_chunk
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -29,11 +29,11 @@ def download_nltk_data_for_analysis():
 
     # List of NLTK resources to download
     resources = {
-        'punkt': 'tokenizers/punkt',
+        'punkt': 'tokenizers/punkt', # This downloads the 'punkt' directory which contains language pickles
         'stopwords': 'corpora/stopwords',
         'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
         'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
-        'words': 'corpora/words',
+        'words': 'corpora/words', # Required by maxent_ne_chunker
     }
 
     for resource_name, resource_path in resources.items():
@@ -42,26 +42,45 @@ def download_nltk_data_for_analysis():
         except LookupError:
             nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True)
 
+    # --- Explicitly load Indonesian PunktSentenceTokenizer ---
     st.session_state._indonesian_punkt_tokenizer = None
     try:
-        # Konstruksi jalur yang diharapkan untuk indonesian.pickle
         expected_indonesian_punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt', 'indonesian.pickle')
-        
         if os.path.exists(expected_indonesian_punkt_path):
             with open(expected_indonesian_punkt_path, 'rb') as f:
                 st.session_state._indonesian_punkt_tokenizer = pickle.load(f)
         else:
-            # Jika file tidak ditemukan, berikan peringatan dan gunakan fallback
-            st.warning(f"Peringatan: indonesian.pickle tidak ditemukan di {expected_indonesian_punkt_path} setelah unduhan 'punkt'. "
+            st.warning(f"Peringatan: indonesian.pickle tidak ditemukan di {expected_indonesian_punkt_path}. "
                        "Akan menggunakan tokenizer kalimat sederhana untuk Bahasa Indonesia, yang mungkin kurang akurat.")
-            st.session_state._indonesian_punkt_tokenizer = None
-            
     except Exception as e:
         st.warning(f"Peringatan: Gagal memuat Indonesian Punkt tokenizer: {e}. "
                    "Akan menggunakan tokenizer kalimat sederhana untuk Bahasa Indonesia, yang mungkin kurang akurat.")
-        st.session_state._indonesian_punkt_tokenizer = None
+
+    # --- Explicitly load English PunktSentenceTokenizer for NER's word_tokenize ---
+    # This is crucial if nltk.word_tokenize(..., language='english') is used later
+    st.session_state._english_punkt_tokenizer = None
+    try:
+        expected_english_punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt', 'english.pickle')
+        if os.path.exists(expected_english_punkt_path):
+            with open(expected_english_punkt_path, 'rb') as f:
+                st.session_state._english_punkt_tokenizer = pickle.load(f)
+        else:
+            st.warning(f"Peringatan: english.pickle tidak ditemukan di {expected_english_punkt_path}. "
+                       "NER NLTK mungkin tidak berfungsi dengan baik karena word_tokenize(language='english') bergantung padanya.")
+    except Exception as e:
+        st.warning(f"Peringatan: Gagal memuat English Punkt tokenizer: {e}. "
+                   "NER NLTK mungkin tidak berfungsi dengan baik karena word_tokenize(language='english') bergantung padanya.")
 
 download_nltk_data_for_analysis()
+
+# --- Custom Sentence Tokenizer Fallback (Regex) ---
+def simple_sentence_tokenize(text):
+    # Very basic regex to split sentences. Not as robust as NLTK Punkt.
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences: # If splitting fails, treat entire text as one sentence
+        sentences = [text]
+    return sentences
 
 # --- Fungsi untuk peringkasan TF-IDF ---
 def summarize_text_tfidf(text, num_sentences=5):
@@ -72,13 +91,8 @@ def summarize_text_tfidf(text, num_sentences=5):
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
-        # Fallback ke tokenizer kalimat berbasis regex sederhana untuk Bahasa Indonesia
-        # Ini adalah fallback yang sangat dasar dan mungkin tidak seakurat Punkt
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        # Saring string kosong jika pemisahan menghasilkan string kosong
-        sentences = [s.strip() for s in sentences if s.strip()]
-        if not sentences: # Jika pemisahan regex gagal, perlakukan seluruh teks sebagai satu kalimat
-            sentences = [text]
+        sentences = simple_sentence_tokenize(text)
+        # st.warning("Menggunakan tokenizer kalimat sederhana untuk peringkasan.") # Hapus notifikasi ini jika terlalu sering muncul
 
     if len(sentences) <= num_sentences:
         return text
@@ -86,7 +100,8 @@ def summarize_text_tfidf(text, num_sentences=5):
     stop_words_id = set(stopwords.words('indonesian'))
     
     def preprocess(sentence):
-        words = word_tokenize(sentence.lower()) # Tanpa argumen 'language'
+        # Use regex for word tokenization to completely avoid NLTK's internal punkt dependency here
+        words = re.findall(r'\b\w+\b', sentence.lower())
         return [word for word in words if word.isalnum() and word not in stop_words_id]
 
     vectorizer = TfidfVectorizer(tokenizer=preprocess, stop_words=list(stop_words_id))
@@ -114,16 +129,22 @@ def perform_ner_nltk(text):
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
-        # Fallback ke tokenizer kalimat berbasis regex sederhana untuk Bahasa Indonesia
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        if not sentences:
-            sentences = [text]
+        sentences = simple_sentence_tokenize(text)
+        # st.warning("Menggunakan tokenizer kalimat sederhana untuk NER.") # Hapus notifikasi ini jika terlalu sering muncul
 
     all_named_entities = []
     for sentence in sentences:
-        words = word_tokenize(sentence, language='english') 
-        tagged_words = pos_tag(words, lang='eng')
+        # For NER, we need NLTK's word tokenizer and POS tagger
+        # This still relies on English Punkt being loadable for word_tokenize(..., language='english')
+        try:
+            words = word_tokenize(sentence, language='english') 
+            tagged_words = pos_tag(words, lang='eng')
+        except LookupError:
+            st.error("Gagal melakukan word tokenization/POS tagging untuk NER. Pastikan English Punkt dan Averaged Perceptron Tagger diunduh.")
+            continue # Skip this sentence if tokenization fails
+        except Exception as e:
+            st.error(f"Error saat word tokenization/POS tagging untuk NER: {e}. Melewatkan kalimat ini.")
+            continue
 
         tree = ne_chunk(tagged_words) 
 
