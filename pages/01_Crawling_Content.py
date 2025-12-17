@@ -15,6 +15,7 @@ st.set_page_config(layout="wide", page_title="ESG Screening Tool")
 
 # --- Inisialisasi Session State ---
 # Pastikan semua state yang akan digunakan di berbagai halaman diinisialisasi
+# Ini penting agar 02_Analysis.py bisa membaca data ini
 if 'crawled_data' not in st.session_state:
     st.session_state.crawled_data = None
 if 'final_esg_category' not in st.session_state:
@@ -436,209 +437,152 @@ def crawl_detik(url):
             'crawled_content': f'Kesalahan tak terduga: {e}'
         }
 
-# --- FUNGSI HALAMAN UTAMA (SCREENING) ---
-def show_home_page():
-    st.title("ESG Screening Tool")
-    st.markdown("""
-    Aplikasi ini melakukan *screening* tema ESG (Environment, Social, Governance) dari teks
-    menggunakan pendekatan berbasis kata kunci yang diperluas dan analisis semantik AI.
-    """)
+# --- KONTEN HALAMAN SCREENING UTAMA (app.py) ---
+st.title("ESG Screening Tool")
+st.markdown("""
+Aplikasi ini melakukan *screening* tema ESG (Environment, Social, Governance) dari teks
+menggunakan pendekatan berbasis kata kunci yang diperluas dan analisis semantik AI.
+""")
 
-    st.subheader("Input URL Artikel untuk Screening ESG")
+st.subheader("Input URL Artikel untuk Screening ESG")
 
-    website_choice = st.radio(
-        "Pilih website sumber artikel:",
-        ("Kompas.com", "Tribunnews.com", "Detik.com")
-    )
+website_choice = st.radio(
+    "Pilih website sumber artikel:",
+    ("Kompas.com", "Tribunnews.com", "Detik.com")
+)
 
-    user_url_input = st.text_input("Masukkan URL Artikel di sini:")
+user_url_input = st.text_input("Masukkan URL Artikel di sini:")
 
-    if st.button("Crawl dan Lakukan Screening ESG"):
-        if not user_url_input:
-            st.warning("Mohon masukkan URL artikel untuk memulai screening.")
-        else:
-            st.subheader("Hasil Crawling dan Screening ESG")
+if st.button("Crawl dan Lakukan Screening ESG"):
+    if not user_url_input:
+        st.warning("Mohon masukkan URL artikel untuk memulai screening.")
+    else:
+        st.subheader("Hasil Crawling dan Screening ESG")
 
-            crawled_data = None
-            with st.spinner(f"Melakukan crawling dari {website_choice} ({user_url_input})..."):
-                if website_choice == "Kompas.com":
-                    crawled_data = crawl_kompas(user_url_input)
-                elif website_choice == "Tribunnews.com":
-                    crawled_data = crawl_tribunnews(user_url_input)
-                elif website_choice == "Detik.com":
-                    crawled_data = crawl_detik(user_url_input)
-                else:
-                    st.error("Pilihan website tidak valid.")
-                    crawled_data = {'crawled_title': 'Error', 'crawled_date': 'Error', 'crawled_content': 'Pilihan website tidak valid.'}
-
-            # Simpan hasil crawling ke session state
-            st.session_state.crawled_data = crawled_data
-            st.session_state.crawled_url = user_url_input
-
-            if crawled_data['crawled_title'].startswith('Gagal diakses') or crawled_data['crawled_title'].startswith('Kesalahan tak terduga'):
-                st.error(f"Gagal melakukan crawling: {crawled_data['crawled_title']}")
-                st.write(f"Detail: {crawled_data['crawled_content']}")
-                st.session_state.final_esg_category = "Gagal Crawling" # Set category to indicate failure
+        crawled_data = None
+        with st.spinner(f"Melakukan crawling dari {website_choice} ({user_url_input})..."):
+            if website_choice == "Kompas.com":
+                crawled_data = crawl_kompas(user_url_input)
+            elif website_choice == "Tribunnews.com":
+                crawled_data = crawl_tribunnews(user_url_input)
+            elif website_choice == "Detik.com":
+                crawled_data = crawl_detik(user_url_input)
             else:
-                st.success("Crawling berhasil!")
-                st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
-                st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
-                with st.expander("Lihat Isi Artikel Lengkap"):
-                    st.write(crawled_data['crawled_content'])
+                st.error("Pilihan website tidak valid.")
+                crawled_data = {'crawled_title': 'Error', 'crawled_date': 'Error', 'crawled_content': 'Pilihan website tidak valid.'}
 
-                crawled_title_for_screening = crawled_data['crawled_title']
+        # Simpan hasil crawling ke session state
+        st.session_state.crawled_data = crawled_data
+        st.session_state.crawled_url = user_url_input
 
-                # 1. Klasifikasi Awal Berbasis Kata Kunci
-                st.write("---")
-                st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
-                with st.spinner("Menerapkan klasifikasi kata kunci..."):
-                    esg_keyword_category = classify_esg_fast(crawled_title_for_screening)
-                st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
+        if crawled_data['crawled_title'].startswith('Gagal diakses') or crawled_data['crawled_title'].startswith('Kesalahan tak terduga'):
+            st.error(f"Gagal melakukan crawling: {crawled_data['crawled_title']}")
+            st.write(f"Detail: {crawled_data['crawled_content']}")
+            st.session_state.final_esg_category = "Gagal Crawling" # Set category to indicate failure
+        else:
+            st.success("Crawling berhasil!")
+            st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
+            st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
+            with st.expander("Lihat Isi Artikel Lengkap"):
+                st.write(crawled_data['crawled_content'])
 
-                # 2. Analisis Semantik Lanjutan (Menggunakan AI)
-                st.write("---")
-                st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
+            crawled_title_for_screening = crawled_data['crawled_title']
 
-                @st.cache_resource
-                def load_indobert_model():
-                    """Memuat model embedding IndoBERT (cached)."""
-                    model_cache_dir = "./.model_cache"
-                    os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
-                    model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
-                    return model
+            # 1. Klasifikasi Awal Berbasis Kata Kunci
+            st.write("---")
+            st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
+            with st.spinner("Menerapkan klasifikasi kata kunci..."):
+                esg_keyword_category = classify_esg_fast(crawled_title_for_screening)
+            st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
 
-                indobert_model = load_indobert_model()
+            # 2. Analisis Semantik Lanjutan (Menggunakan AI)
+            st.write("---")
+            st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
 
-                themes = {
-                    "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
-                    "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
-                    "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
-                }
+            @st.cache_resource
+            def load_indobert_model():
+                """Memuat model embedding IndoBERT (cached)."""
+                model_cache_dir = "./.model_cache"
+                os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+                model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
+                return model
 
-                theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
+            indobert_model = load_indobert_model()
 
-                with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
-                    title_embedding = indobert_model.encode(crawled_title_for_screening, convert_to_tensor=True).unsqueeze(0)
-                
-                with st.spinner("Menghitung skor kemiripan semantik..."):
-                    scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
-                    scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
-                    scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+            themes = {
+                "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
+                "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
+                "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+            }
 
-                    esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
-                    best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
-                    prediksi_ai = np.select(
-                        [best_idx == 0, best_idx == 1, best_idx == 2],
-                        ["Environment", "Social", "Governance"],
-                        default="Non-ESG"
-                    )
-                st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
+            theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
 
-                # 3. Penerapan Threshold Otomatis
-                st.write("---")
-                st.markdown("#### 3. Finalisasi Klasifikasi")
-                
-                # Threshold Kemiripan Semantik (fixed)
-                threshold = 0.45
-                st.info(f"Threshold Kemiripan Semantik yang digunakan: **{threshold}**")
+            with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
+                title_embedding = indobert_model.encode(crawled_title_for_screening, convert_to_tensor=True).unsqueeze(0)
+            
+            with st.spinner("Menghitung skor kemiripan semantik..."):
+                scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
+                scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
+                scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
 
-                final_esg_category = esg_keyword_category
-                if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
-                    final_esg_category = prediksi_ai
-                    st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
-                elif final_esg_category != "Non-ESG":
-                    st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
-                else:
-                    st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
+                esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
+                best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
+                prediksi_ai = np.select(
+                    [best_idx == 0, best_idx == 1, best_idx == 2],
+                    ["Environment", "Social", "Governance"],
+                    default="Non-ESG"
+                )
+            st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
 
-                st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
-                st.session_state.final_esg_category = final_esg_category # Simpan kategori akhir ke session state
+            # 3. Penerapan Threshold Otomatis
+            st.write("---")
+            st.markdown("#### 3. Finalisasi Klasifikasi")
+            
+            # Threshold Kemiripan Semantik (fixed)
+            threshold = 0.45
+            st.info(f"Threshold Kemiripan Semantik yang digunakan: **{threshold}**")
 
-    # Bagian untuk melanjutkan ke analisis, akan muncul setelah screening selesai
-    if st.session_state.crawled_data is not None and st.session_state.final_esg_category is not None:
-        st.write("---")
-        st.markdown("#### Langkah Selanjutnya:")
+            final_esg_category = esg_keyword_category
+            if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
+                final_esg_category = prediksi_ai
+                st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
+            elif final_esg_category != "Non-ESG":
+                st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
+            else:
+                st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
 
-        if st.session_state.final_esg_category == "Gagal Crawling":
-            st.error("Tidak dapat melanjutkan ke analisis karena crawling artikel gagal.")
-            if st.button("Kembali ke Awal"):
-                st.session_state.crawled_data = None
-                st.session_state.final_esg_category = None
-                st.session_state.crawled_url = None
-                st.query_params.page = "home" # Kembali ke halaman utama
-                st.experimental_rerun()
-        elif st.session_state.final_esg_category == "Non-ESG":
-            st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Tetap Lanjutkan ke Analisis"):
-                    st.query_params.page = "analysis"
-                    st.experimental_rerun()
-            with col2:
-                if st.button("Selesai"):
-                    st.session_state.crawled_data = None
-                    st.session_state.final_esg_category = None
-                    st.session_state.crawled_url = None
-                    st.query_params.page = "home" # Kembali ke halaman utama
-                    st.experimental_rerun()
-        else: # Jika kategori bukan Non-ESG (Environment, Social, Governance)
-            st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
-            if st.button("Lanjutkan ke Analisis"):
-                st.query_params.page = "analysis"
-                st.experimental_rerun()
+            st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
+            st.session_state.final_esg_category = final_esg_category # Simpan kategori akhir ke session state
 
-# --- FUNGSI HALAMAN ANALISIS (02_Analysis) ---
-def show_analysis_page():
-    st.title("ESG Screening Tool - Tahap Analisis Detail")
+# Bagian untuk melanjutkan ke analisis, akan muncul setelah screening selesai
+if st.session_state.crawled_data is not None and st.session_state.final_esg_category is not None:
+    st.write("---")
+    st.markdown("#### Langkah Selanjutnya:")
 
-    if st.session_state.crawled_data and st.session_state.final_esg_category:
-        st.markdown(f"### Artikel yang Sedang Dianalisis:")
-        st.write(f"**URL Artikel:** {st.session_state.crawled_url}")
-        st.write(f"**Judul Artikel:** {st.session_state.crawled_data['crawled_title']}")
-        st.write(f"**Kategori ESG Akhir:** {st.session_state.final_esg_category}")
-        
-        with st.expander("Lihat Isi Artikel Lengkap"):
-            st.write(st.session_state.crawled_data['crawled_content'])
-
-        st.markdown("---")
-        st.markdown("#### Area untuk Analisis Lebih Lanjut")
-        st.info("""
-        Di sini Anda dapat menambahkan komponen Streamlit dan logika Python untuk melakukan
-        analisis mendalam terhadap `st.session_state.crawled_data['crawled_content']`
-        berdasarkan `st.session_state.final_esg_category`.
-
-        Contoh analisis yang bisa dilakukan:
-        - Ekstraksi entitas kunci (NER)
-        - Analisis sentimen
-        - Identifikasi topik spesifik dalam kategori ESG
-        - Visualisasi data
-        """)
-        
-        st.write("*(Ini adalah placeholder untuk fungsionalitas analisis aktual)*")
-
-        st.markdown("---")
-        if st.button("Kembali ke Screening Awal"):
-            # Bersihkan session state yang relevan jika ingin memulai proses baru
+    if st.session_state.final_esg_category == "Gagal Crawling":
+        st.error("Tidak dapat melanjutkan ke analisis karena crawling artikel gagal.")
+        if st.button("Mulai Screening Baru"):
+            # Bersihkan session state agar bisa memulai screening baru
             st.session_state.crawled_data = None
             st.session_state.final_esg_category = None
             st.session_state.crawled_url = None
-            st.query_params.page = "home"
-            st.experimental_rerun()
+            st.rerun() # Muat ulang halaman untuk memulai dari awal
     else:
-        st.warning("Tidak ada data artikel yang tersedia untuk analisis. Silakan kembali ke halaman utama untuk melakukan screening.")
-        if st.button("Kembali ke Screening"):
-            st.query_params.page = "home"
-            st.experimental_rerun()
-
-# --- LOGIKA ROUTING UTAMA ---
-current_page = st.query_params.get("page", "home")
-
-if current_page == "home":
-    show_home_page()
-elif current_page == "analysis":
-    show_analysis_page()
-else:
-    st.error("Halaman tidak ditemukan.")
-    if st.button("Kembali ke Halaman Utama"):
-        st.query_params.page = "home"
-        st.experimental_rerun()
+        st.info("Hasil screening telah disimpan. Anda dapat melanjutkan ke halaman '02_Analysis' melalui sidebar.")
+        
+        if st.session_state.final_esg_category == "Non-ESG":
+            st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+            if st.button("Selesai (Reset Screening)"):
+                
+                st.session_state.crawled_data = None
+                st.session_state.final_esg_category = None
+                st.session_state.crawled_url = None
+                st.rerun() 
+        else: # Jika kategori bukan Non-ESG (Environment, Social, Governance)
+            st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+            if st.button("Selesai (Reset Screening)"):
+                # Bersihkan session state agar bisa memulai screening baru
+                st.session_state.crawled_data = None
+                st.session_state.final_esg_category = None
+                st.session_state.crawled_url = None
+                st.rerun() 
