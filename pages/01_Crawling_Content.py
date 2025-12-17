@@ -108,10 +108,10 @@ def semantic_expand(base_list, model, top_k=3):
     
     for i, word in enumerate(corpus):
         query_emb = corpus_emb[i]
-        cos_scores = util.cos_sim(query_emb, corpus_emb)[0](citation_0)
+        cos_scores = util.cos_sim(query_emb, corpus_emb)[0]
         # Ambil top_k+1 hasil untuk menyertakan kata itu sendiri, lalu lewati
         top_results = torch.topk(cos_scores, k=min(top_k + 1, len(corpus)))
-        for score, idx in zip(top_results[0](citation_0)[1:], top_results[1](citation_1)[1:]):  # lewati kata itu sendiri
+        for score, idx in zip(top_results[0][1:], top_results[1][1:]):  # lewati kata itu sendiri
             new_words.add(corpus[idx])
     return list(new_words)
 
@@ -476,4 +476,117 @@ if st.button("Crawl dan Lakukan Screening ESG"):
         if crawled_data['crawled_title'].startswith('Gagal diakses') or crawled_data['crawled_title'].startswith('Kesalahan tak terduga'):
             st.error(f"Gagal melakukan crawling: {crawled_data['crawled_title']}")
             st.write(f"Detail: {crawled_data['crawled_content']}")
-            st.session_state.final_esg_category = "
+            st.session_state.final_esg_category = "Gagal Crawling" # Set category to indicate failure
+        else:
+            st.success("Crawling berhasil!")
+            st.write(f"**Judul Artikel:** {crawled_data['crawled_title']}")
+            st.write(f"**Tanggal Publikasi:** {crawled_data['crawled_date']}")
+            with st.expander("Lihat Isi Artikel Lengkap"):
+                st.write(crawled_data['crawled_content'])
+
+            crawled_title_for_screening = crawled_data['crawled_title']
+
+            # 1. Klasifikasi Awal Berbasis Kata Kunci
+            st.write("---")
+            st.markdown("#### 1. Klasifikasi Awal Berbasis Kata Kunci")
+            with st.spinner("Menerapkan klasifikasi kata kunci..."):
+                esg_keyword_category = classify_esg_fast(crawled_title_for_screening)
+            st.success(f"**Klasifikasi Kata Kunci:** {esg_keyword_category}")
+
+            # 2. Analisis Semantik Lanjutan (Menggunakan AI)
+            st.write("---")
+            st.markdown("#### 2. Analisis Semantik Lanjutan (Menggunakan AI)")
+
+            @st.cache_resource
+            def load_indobert_model():
+                """Memuat model embedding IndoBERT (cached)."""
+                model_cache_dir = "./.model_cache"
+                os.makedirs(model_cache_dir, exist_ok=True) # Pastikan direktori ada
+                model = SentenceTransformer("indobenchmark/indobert-base-p2", cache_folder=model_cache_dir)
+                return model
+
+            indobert_model = load_indobert_model()
+
+            themes = {
+                "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
+                "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
+                "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+            }
+
+            theme_embeddings = {k: indobert_model.encode(v, convert_to_tensor=True) for k, v in themes.items()}
+
+            with st.spinner("Meng-encode judul/teks untuk analisis semantik..."):
+                title_embedding = indobert_model.encode(crawled_title_for_screening, convert_to_tensor=True).unsqueeze(0)
+            
+            with st.spinner("Menghitung skor kemiripan semantik..."):
+                scores_env = util.cos_sim(title_embedding, theme_embeddings["Environment"]).max(dim=1).values.cpu().numpy()
+                scores_soc = util.cos_sim(title_embedding, theme_embeddings["Social"]).max(dim=1).values.cpu().numpy()
+                scores_gov = util.cos_sim(title_embedding, theme_embeddings["Governance"]).max(dim=1).values.cpu().numpy()
+
+                esg_similarity = np.max([scores_env, scores_soc, scores_gov], axis=0)[0]
+                best_idx = np.argmax([scores_env, scores_soc, scores_gov], axis=0)[0]
+                prediksi_ai = np.select(
+                    [best_idx == 0, best_idx == 1, best_idx == 2],
+                    ["Environment", "Social", "Governance"],
+                    default="Non-ESG"
+                )
+            st.success(f"**Prediksi AI (Semantik):** {prediksi_ai} (Kemiripan: {esg_similarity:.2f})")
+
+            # 3. Penerapan Threshold Otomatis
+            st.write("---")
+            st.markdown("#### 3. Finalisasi Klasifikasi")
+            
+            # Threshold Kemiripan Semantik (fixed)
+            threshold = 0.45
+            st.info(f"Threshold Kemiripan Semantik yang digunakan: **{threshold}**")
+
+            final_esg_category = esg_keyword_category
+            if final_esg_category == "Non-ESG" and esg_similarity >= threshold:
+                final_esg_category = prediksi_ai
+                st.info(f"Judul awalnya 'Non-ESG' berdasarkan kata kunci, tetapi direklasifikasi menjadi **{final_esg_category}** oleh AI karena kemiripan semantik tinggi ({esg_similarity:.2f} >= {threshold}).")
+            elif final_esg_category != "Non-ESG":
+                st.info(f"Judul sudah diklasifikasikan sebagai **{final_esg_category}** berdasarkan kata kunci.")
+            else:
+                st.info(f"Judul tetap 'Non-ESG' karena tidak ada kata kunci yang cocok dan kemiripan semantik ({esg_similarity:.2f}) di bawah threshold ({threshold}).")
+
+            st.markdown(f"## **Klasifikasi ESG Akhir: {final_esg_category}**")
+            st.session_state.final_esg_category = final_esg_category # Simpan kategori akhir ke session state
+
+# Bagian untuk melanjutkan ke analisis, akan muncul setelah screening selesai
+if st.session_state.crawled_data is not None and st.session_state.final_esg_category is not None:
+    st.write("---")
+    st.markdown("#### Lanjutkan ke Tahap Analisis?")
+
+    if st.session_state.final_esg_category == "Gagal Crawling":
+        st.error("Tidak dapat melanjutkan ke analisis karena crawling artikel gagal.")
+    else:
+        if st.session_state.final_esg_category == "Non-ESG":
+            st.warning(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+            if st.button("Tetap Lanjutkan ke Analisis"):
+                st.success("Anda memilih untuk melanjutkan ke tahap Analisis.")
+                st.markdown("### Tahap 02: Analisis Detail")
+                st.info(f"""
+                **URL Artikel:** {st.session_state.crawled_url}
+                **Judul Artikel:** {st.session_state.crawled_data['crawled_title']}
+                **Kategori ESG Akhir:** {st.session_state.final_esg_category}
+                **Isi Artikel (untuk analisis):**
+                ```
+                {st.session_state.crawled_data['crawled_content'][:500]}...
+                ```
+                *(Menyimpan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
+                """)
+        else: # Jika kategori bukan Non-ESG
+            st.success(f"Artikel ini diklasifikasikan sebagai **{st.session_state.final_esg_category}**.")
+            if st.button("Lanjutkan ke Analisis"):
+                st.success("Anda memilih untuk melanjutkan ke tahap Analisis.")
+                st.markdown("### Tahap 02: Analisis Detail")
+                st.info(f"""
+                **URL Artikel:** {st.session_state.crawled_url}
+                **Judul Artikel:** {st.session_state.crawled_data['crawled_title']}
+                **Kategori ESG Akhir:** {st.session_state.final_esg_category}
+                **Isi Artikel (untuk analisis):**
+                ```
+                {st.session_state.crawled_data['crawled_content'][:500]}...
+                ```
+                *(Menyimpan `st.session_state.crawled_data` dan `st.session_state.final_esg_category`)*
+                """)
