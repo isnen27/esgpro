@@ -1,9 +1,5 @@
 # app.py
 import streamlit as st
-import crawling_content
-import preprocessing
-import visualization
-import evaluation
 
 st.set_page_config(
     page_title="ESG Prediction App",
@@ -11,22 +7,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sidebar for navigation
-st.sidebar.title("Navigasi")
-menu_selection = st.sidebar.radio(
-    "Pilih Menu:",
-    ["Crawling Content", "Preprocessing", "Visualization", "Evaluation"]
-)
+st.title("Selamat Datang di Aplikasi Prediksi ESG")
+st.write("""
+Aplikasi ini dirancang untuk membantu Anda dalam proses prediksi Environmental, Social, and Governance (ESG).
+Gunakan menu di sidebar untuk menjelajahi berbagai fitur:
+- **Crawling Content:** Untuk mengumpulkan data dari sumber web.
+- **Preprocessing:** Untuk membersihkan dan menyiapkan data.
+- **Visualization:** Untuk menganalisis data secara visual.
+- **Evaluation:** Untuk mengevaluasi performa model prediksi.
+""")
 
-# Display content based on menu selection
-if menu_selection == "Crawling Content":
-    crawling_content.app()
-elif menu_selection == "Preprocessing":
-    preprocessing.app()
-elif menu_selection == "Visualization":
-    visualization.app()
-elif menu_selection == "Evaluation":
-    evaluation.app()
+st.markdown("---")
+st.info("Pilih menu di sidebar untuk memulai!")
 
-st.sidebar.markdown("---")
-st.sidebar.info("Aplikasi Prediksi ESG")
+# Kamu bisa menambahkan konten lain untuk halaman utama di sini
