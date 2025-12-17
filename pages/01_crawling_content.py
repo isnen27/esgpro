@@ -21,8 +21,8 @@ def load_esg_model():
     return model
 
 # --- Konten Utama Aplikasi Streamlit ---
-st.title("Crawling Content & Screening Tema ESG")
-st.write("Di sini Anda dapat memilih website, menginput URL, dan melakukan screening tema ESG pada judul berita.")
+st.title("Crawling Content & Prediksi Tema ESG")
+st.write("Di sini Anda dapat memilih website, menginput URL, dan memprediksi tema ESG pada judul berita menggunakan AI Semantik.")
 
 # --- 1. Pilih Website ---
 st.subheader("1. Pilih Website Sumber")
@@ -32,7 +32,7 @@ website_choice = st.selectbox(
 )
 
 # --- 2. Input URL ---
-st.subheader("2. Input URL untuk Crawling")
+st.subheader("2. Input URL untuk Analisis")
 # Contoh URL yang relevan dengan format yang Anda berikan
 default_url = "https://www.kompas.com/global/read/2023/10/26/123456789/peran-indonesia-dalam-penanganan-perubahan-iklim"
 if website_choice == "Tribunnews.com":
@@ -40,12 +40,9 @@ if website_choice == "Tribunnews.com":
 elif website_choice == "Detik.com":
     default_url = "https://www.detik.com/finance/berita-ekonomi-bisnis/d-7000000/pemerintah-dorong-penerapan-tata-kelola-perusahaan-yang-baik"
 
-url_input = st.text_input(f"Masukkan URL dari {website_choice} untuk di-screening:", default_url)
+url_input = st.text_input(f"Masukkan URL dari {website_choice} untuk dianalisis:", default_url)
 
 # --- Placeholder untuk crawling aktual ---
-# Dalam skenario nyata, Anda akan memiliki fungsi di sini yang mengambil URL
-# dan mengembalikan DataFrame dengan kolom 'link' dan mungkin konten lainnya.
-# Untuk contoh ini, kita akan mensimulasikan DataFrame berdasarkan satu URL input.
 def simulate_crawling(url):
     """
     Fungsi dummy untuk mensimulasikan hasil crawling.
@@ -54,11 +51,10 @@ def simulate_crawling(url):
     """
     st.info(f"Simulasi crawling dari URL: {url}")
     # Untuk demonstrasi, kita hanya membuat DataFrame dengan URL input
-    # dan mengasumsikan ini adalah 'link' yang akan diproses.
     return pd.DataFrame({"link": [url]})
 
-# Tombol untuk memulai proses screening
-if st.button("Mulai Screening Tema ESG"):
+# Tombol untuk memulai proses analisis
+if st.button("Mulai Prediksi Tema ESG"):
     if not url_input:
         st.error("URL tidak boleh kosong. Silakan masukkan URL.")
         st.stop()
@@ -76,56 +72,14 @@ if st.button("Mulai Screening Tema ESG"):
     st.success("Judul berhasil diekstrak.")
     st.dataframe(df[['link', 'judul']])
 
-    # --- Memuat Keyword ESG dari CSV ---
-    st.subheader("4. Memuat Keyword ESG")
-    uploaded_keywords_file = st.file_uploader("Unggah file CSV keyword ESG (harus memiliki kolom 'category' dan 'keyword')", type=["csv"])
-
-    esg_df = None
-    if uploaded_keywords_file is not None:
-        try:
-            esg_df = pd.read_csv(uploaded_keywords_file)
-            if not {'category', 'keyword'}.issubset(esg_df.columns):
-                st.error("File CSV keyword harus memiliki kolom: 'category' dan 'keyword'.")
-                st.stop()
-            
-            env_keywords = esg_df[esg_df["category"].str.lower() == "environment"]["keyword"].dropna().str.lower().tolist()
-            soc_keywords = esg_df[esg_df["category"].str.lower() == "social"]["keyword"].dropna().str.lower().tolist()
-            gov_keywords = esg_df[esg_df["category"].str.lower() == "governance"]["keyword"].dropna().str.lower().tolist()
-            
-            st.success(f"✅ Keyword ESG dimuat: {len(env_keywords)} Environment, {len(soc_keywords)} Social, {len(gov_keywords)} Governance")
-        except Exception as e:
-            st.error(f"Gagal memuat atau memproses file keyword ESG: {e}")
-            st.stop()
-    else:
-        st.info("Silakan unggah file `esg_keywords.csv` Anda untuk melanjutkan.")
-        st.stop() # Hentikan jika tidak ada file keyword yang diunggah
-
-    # --- Klasifikasi Cepat via Keyword ---
-    st.subheader("5. Klasifikasi Cepat via Keyword")
-    def classify_esg_fast(judul):
-        j = str(judul).lower()
-        if any(k in j for k in env_keywords):
-            return "Environment"
-        elif any(k in j for k in soc_keywords):
-            return "Social"
-        elif any(k in j for k in gov_keywords):
-            return "Governance"
-        else:
-            return "Non-ESG"
-
-    with st.spinner("Melakukan klasifikasi cepat via keyword..."):
-        df["Kategori_ESG"] = df["judul"].apply(classify_esg_fast)
-    st.success("Klasifikasi via keyword selesai.")
-    st.dataframe(df[['judul', 'Kategori_ESG']])
-
     # --- Analisis Semantik (AI) ---
-    st.subheader("6. Analisis Semantik (AI)")
+    st.subheader("4. Prediksi Tema ESG Menggunakan AI Semantik")
     model = load_esg_model() # Muat model yang di-cache
 
     themes = {
-        "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral"],
-        "Social": ["social responsibility", "community development", "human rights", "workplace equality"],
-        "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency"]
+        "Environment": ["environmental sustainability", "climate change", "renewable energy", "carbon neutral", "lingkungan", "iklim", "emisi", "daur ulang"],
+        "Social": ["social responsibility", "community development", "human rights", "workplace equality", "sosial", "masyarakat", "karyawan", "pendidikan"],
+        "Governance": ["corporate governance", "anti corruption", "ethical management", "transparency", "tata kelola", "etika", "transparansi", "akuntabilitas"]
     }
 
     with st.spinner("Menghitung embedding tema ESG..."):
@@ -171,28 +125,27 @@ if st.button("Mulai Screening Tema ESG"):
 
 
     # --- Terapkan Threshold Otomatis ---
-    st.subheader("7. Terapkan Threshold Otomatis")
-    threshold = st.slider("Pilih nilai threshold untuk AI Similarity (hanya berlaku untuk 'Non-ESG' dari klasifikasi keyword):", min_value=0.0, max_value=1.0, value=0.45, step=0.01)
+    st.subheader("5. Filter Prediksi dengan Threshold Kemiripan")
+    threshold = st.slider("Pilih nilai threshold kemiripan (skor di bawah ini akan dianggap 'Non-ESG'):", min_value=0.0, max_value=1.0, value=0.45, step=0.01)
     
-    with st.spinner("Menerapkan threshold otomatis..."):
-        # Hanya ubah 'Non-ESG' jika skor kemiripan AI di atas threshold
-        mask_auto = (df["Kategori_ESG"] == "Non-ESG") & (df["esg_similarity"] >= threshold)
-        df.loc[mask_auto, "Kategori_ESG"] = df.loc[mask_auto, "Prediksi_AI"]
-    st.success("Threshold otomatis diterapkan.")
-    st.dataframe(df[['judul', 'Kategori_ESG', 'Prediksi_AI', 'esg_similarity']])
+    with st.spinner("Menerapkan threshold kemiripan..."):
+        df["Tema_ESG_Final"] = df["Prediksi_AI"] # Mulai dengan prediksi AI
+        # Ubah menjadi 'Non-ESG' jika skor kemiripan di bawah threshold
+        df.loc[df["esg_similarity"] < threshold, "Tema_ESG_Final"] = "Non-ESG"
+    st.success("Threshold kemiripan diterapkan.")
+    st.dataframe(df[['judul', 'esg_similarity', 'Prediksi_AI', 'Tema_ESG_Final']])
 
-    st.subheader("Hasil Akhir Screening Tema ESG")
-    st.dataframe(df[['link', 'judul', 'Kategori_ESG', 'Prediksi_AI', 'esg_similarity']])
+    st.subheader("Hasil Akhir Prediksi Tema ESG")
+    st.dataframe(df[['link', 'judul', 'Tema_ESG_Final', 'esg_similarity']])
 
     # Opsi untuk mengunduh hasil
     csv_output = df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Unduh Hasil Screening (CSV)",
+        label="Unduh Hasil Prediksi (CSV)",
         data=csv_output,
-        file_name="esg_screened_content.csv",
+        file_name="esg_predicted_content.csv",
         mime="text/csv",
     )
 
 st.markdown("---")
-st.write("Catatan: Fungsi crawling web aktual belum diimplementasikan. Data di atas adalah hasil simulasi dari URL input.")
-st.warning("Pastikan Anda mengunggah file `esg_keywords.csv` yang valid untuk klasifikasi berbasis keyword.")
+st.info("Catatan: Fungsi crawling web aktual belum diimplementasikan. Data di atas adalah hasil simulasi dari URL input. Anda dapat memperluas daftar tema dalam kode untuk meningkatkan akurasi.")
