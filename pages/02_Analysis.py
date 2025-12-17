@@ -2,12 +2,28 @@
 
 import streamlit as st
 import pandas as pd
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForTokenClassification
+from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification # Tetap untuk NER
 import networkx as nx
 from pyvis.network import Network
 import os
 import re
 import torch
+
+# Untuk TF-IDF Summarization
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# --- NLTK Data Download (Instruksi untuk pengguna) ---
+# Pastikan Anda telah mengunduh data NLTK yang diperlukan:
+# import nltk
+# nltk.download('punkt')
+# nltk.download('stopwords')
+# Jika Anda mendeploy ke Streamlit Cloud, buat file `nltk.txt` di root proyek Anda
+# dengan isi:
+# punkt
+# stopwords
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -17,53 +33,68 @@ st.set_page_config(
 )
 
 st.title("Analisis Konten Artikel")
-st.write("Halaman ini menampilkan ringkasan teks, entitas NER (PER, ORG), dan knowledge graph dari konten yang di-crawl.")
+st.write("Halaman ini menampilkan ringkasan teks (TF-IDF), entitas NER (PER, ORG), dan knowledge graph dari konten yang di-crawl.")
 
 # --- Model Loading (Cached) ---
-@st.cache_resource
-def load_summarizer_model():
-    """Loads the summarization model for Indonesian."""
-    with st.spinner("Memuat model summarization... (Ini mungkin membutuhkan waktu saat pertama kali)"):
-        # Menggunakan model T5 yang di-fine-tune untuk ringkasan bahasa Indonesia
-        model_name = "Wikidata/indonesian-t5-base-summarization"
-        tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="./model_cache")
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir="./model_cache")
-        # Device 0 untuk GPU jika tersedia, -1 untuk CPU
-        summarizer = pipeline("summarization", model=model, tokenizer=tokenizer, device=0 if torch.cuda.is_available() else -1)
-    return summarizer
-
+# Hanya NER model yang dimuat dari transformers
 @st.cache_resource
 def load_ner_model():
     """Loads the NER model for Indonesian."""
     with st.spinner("Memuat model NER... (Ini mungkin membutuhkan waktu saat pertama kali)"):
-        # Menggunakan model NER bahasa Indonesia
         model_name = "flax-community/indonesian-ner"
         tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="./model_cache")
         model = AutoModelForTokenClassification.from_pretrained(model_name, cache_dir="./model_cache")
-        # aggregation_strategy="simple" menggabungkan token yang berdekatan dengan label yang sama
         ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple", device=0 if torch.cuda.is_available() else -1)
     return ner_pipeline
 
-# --- Summarization Function ---
+# --- TF-IDF Summarization Function ---
 @st.cache_data
-def get_summary(text, summarizer_pipeline, max_length=150, min_length=30):
-    """Generates a summary of the given text."""
-    if not text or len(text.split()) < 50: # Hanya ringkas jika teks cukup panjang
-        return "Teks terlalu pendek untuk diringkas."
-    try:
-        # Batasi panjang input untuk menghindari masalah memori/waktu proses yang terlalu lama
-        # Model T5 biasanya memiliki batas input sekitar 512 token. Estimasi kasar: 1 token ~ 4 karakter.
-        input_text = text[:4000] 
-        summary = summarizer_pipeline(
-            input_text, 
-            max_length=max_length, 
-            min_length=min_length, 
-            do_sample=False # Untuk output yang lebih deterministik
-        )[0]['summary_text']
-        return summary
-    except Exception as e:
-        st.error(f"Error saat membuat ringkasan: {e}")
-        return "Gagal membuat ringkasan."
+def get_summary_tfidf(text, num_sentences=5):
+    """Generates a summary of the given text using TF-IDF."""
+    if not text or len(text.split()) < 50:
+        return "Teks terlalu pendek untuk diringkas menggunakan TF-IDF."
+
+    sentences = sent_tokenize(text)
+    if len(sentences) <= num_sentences:
+        return text # Jika jumlah kalimat kurang dari atau sama dengan yang diminta, kembalikan teks asli
+
+    # Inisialisasi TF-IDF Vectorizer
+    # Menggunakan stop words bahasa Indonesia
+    stop_words_id = set(stopwords.words('indonesian'))
+    vectorizer = TfidfVectorizer(stop_words=list(stop_words_id)) # Convert set to list
+
+    # Fitur TF-IDF untuk setiap kalimat
+    tfidf_matrix = vectorizer.fit_transform(sentences)
+
+    # Hitung skor untuk setiap kalimat (rata-rata TF-IDF kata dalam kalimat)
+    sentence_scores = {}
+    for i, sentence in enumerate(sentences):
+        # Ambil indeks kata-kata yang ada di vocabulary vectorizer
+        feature_index = [vectorizer.vocabulary_.get(word) for word in word_tokenize(sentence.lower()) if word.isalpha() and word not in stop_words_id]
+        feature_index = [idx for idx in feature_index if idx is not None] # Filter None
+        
+        if feature_index:
+            # Rata-rata TF-IDF dari kata-kata yang relevan dalam kalimat
+            score = tfidf_matrix[i, feature_index].sum() / len(feature_index)
+            sentence_scores[sentence] = score
+        else:
+            sentence_scores[sentence] = 0 # Jika tidak ada kata relevan, skor 0
+
+    # Urutkan kalimat berdasarkan skor dan ambil N teratas
+    ranked_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # Ambil kalimat-kalimat teratas dan urutkan kembali sesuai urutan aslinya
+    summary_sentences = []
+    original_sentence_order = {sentence: i for i, sentence in enumerate(sentences)}
+    
+    # Ambil num_sentences kalimat teratas
+    top_sentences = [s[0] for s in ranked_sentences[:num_sentences]]
+    
+    # Urutkan kembali berdasarkan kemunculan di teks asli
+    summary_sentences = sorted(top_sentences, key=lambda s: original_sentence_order.get(s, len(sentences)))
+
+    return " ".join(summary_sentences)
+
 
 # --- NER Function ---
 @st.cache_data
@@ -73,7 +104,8 @@ def get_ner_entities(text, ner_pipeline):
         return {'PER': [], 'ORG': []}
     
     # Batasi panjang input untuk NER
-    input_text = text[:2000] # Estimasi kasar untuk 512 token
+    # Model NER biasanya memiliki batas input sekitar 512 token. Estimasi kasar: 1 token ~ 4 karakter.
+    input_text = text[:2000] 
     
     entities = ner_pipeline(input_text)
     
@@ -81,13 +113,11 @@ def get_ner_entities(text, ner_pipeline):
     org_entities = []
     
     for entity in entities:
-        # Filter hanya untuk entitas PER (Person) dan ORG (Organization)
         if entity['entity_group'] == 'PER':
             per_entities.append(entity['word'])
         elif entity['entity_group'] == 'ORG':
             org_entities.append(entity['word'])
             
-    # Kembalikan entitas unik dan terurut
     return {'PER': sorted(list(set(per_entities))), 'ORG': sorted(list(set(org_entities)))}
 
 # --- Knowledge Graph Generation Function ---
@@ -99,27 +129,22 @@ def generate_knowledge_graph(text, ner_results):
     if not text or (not ner_results['PER'] and not ner_results['ORG']):
         return "Tidak cukup entitas atau teks untuk membuat knowledge graph."
 
-    G = nx.Graph() # Buat objek graf NetworkX
+    G = nx.Graph()
     all_entities = ner_results['PER'] + ner_results['ORG']
     
-    # Tambahkan node ke graf
     for entity in ner_results['PER']:
         G.add_node(entity, label=entity, group='PER', title=f"Orang: {entity}")
     for entity in ner_results['ORG']:
         G.add_node(entity, label=entity, group='ORG', title=f"Organisasi: {entity}")
 
-    # Pisahkan teks menjadi kalimat (pendekatan sederhana)
-    sentences = re.split(r'[.!?]\s*', text)
+    sentences = sent_tokenize(text) # Menggunakan sent_tokenize dari NLTK
 
-    # Tambahkan edge berdasarkan kemunculan bersama dalam kalimat
     for sentence in sentences:
         found_entities_in_sentence = []
         for entity in all_entities:
-            # Gunakan regex untuk menemukan kecocokan kata utuh
             if re.search(r'\b' + re.escape(entity) + r'\b', sentence, re.IGNORECASE):
                 found_entities_in_sentence.append(entity)
         
-        # Buat edge antara semua pasangan entitas yang ditemukan dalam kalimat yang sama
         for i in range(len(found_entities_in_sentence)):
             for j in range(i + 1, len(found_entities_in_sentence)):
                 node1 = found_entities_in_sentence[i]
@@ -133,9 +158,8 @@ def generate_knowledge_graph(text, ner_results):
     if not G.nodes:
         return "Tidak ada hubungan yang teridentifikasi untuk membuat knowledge graph."
 
-    # Konversi ke Pyvis network untuk visualisasi interaktif
     net = Network(height="750px", width="100%", bgcolor="#222222", font_color="white", notebook=True)
-    net.toggle_physics(True) # Aktifkan fisika untuk tata letak yang lebih baik
+    net.toggle_physics(True)
 
     for node in G.nodes(data=True):
         node_id = node[0]
@@ -145,7 +169,7 @@ def generate_knowledge_graph(text, ner_results):
                      group=node_data.get('group', 'default'),
                      title=node_data.get('title', node_id),
                      color='#FF5733' if node_data.get('group') == 'PER' else '#33FF57' if node_data.get('group') == 'ORG' else '#3366FF',
-                     size=15 + G.degree(node_id) * 2 # Ukuran node berdasarkan derajat (jumlah koneksi)
+                     size=15 + G.degree(node_id) * 2
                     )
 
     for edge in G.edges(data=True):
@@ -153,13 +177,11 @@ def generate_knowledge_graph(text, ner_results):
                      value=edge[2].get('weight', 1), 
                      title=edge[2].get('title', 'Muncul bersama'))
 
-    # Simpan network ke file HTML dan tampilkan
     path = 'html_files'
     if not os.path.exists(path):
         os.makedirs(path)
     net.save_graph(f'{path}/knowledge_graph.html')
     
-    # Baca konten file HTML
     with open(f'{path}/knowledge_graph.html', 'r', encoding='utf-8') as f:
         html_content = f.read()
     
@@ -184,11 +206,11 @@ else:
     with st.expander("Lihat Teks Asli", expanded=False):
         st.write(crawled_content)
 
-    # --- Ringkasan Teks ---
+    # --- Ringkasan Teks (TF-IDF) ---
     st.markdown("---")
-    st.subheader("Ringkasan Teks")
-    summarizer_pipeline = load_summarizer_model()
-    summary = get_summary(crawled_content, summarizer_pipeline)
+    st.subheader("Ringkasan Teks (TF-IDF)")
+    num_sentences_summary = st.slider("Jumlah kalimat dalam ringkasan:", min_value=1, max_value=10, value=5)
+    summary = get_summary_tfidf(crawled_content, num_sentences=num_sentences_summary)
     st.info(summary)
 
     # --- Named Entity Recognition (NER) ---
@@ -224,7 +246,6 @@ else:
     if isinstance(kg_html, str) and ("Tidak cukup entitas" in kg_html or "Tidak ada hubungan" in kg_html):
         st.warning(kg_html)
     elif kg_html:
-        # Tampilkan graf Pyvis menggunakan st.components.v1.html
         st.components.v1.html(kg_html, height=800)
     else:
         st.error("Gagal membuat knowledge graph.")
