@@ -28,7 +28,7 @@ def download_nltk_data_for_analysis():
 
     # List of NLTK resources to download
     resources = {
-        'punkt': 'tokenizers/punkt', # Ini mengunduh direktori 'punkt' yang berisi pickle bahasa
+        'punkt': 'tokenizers/punkt',
         'stopwords': 'corpora/stopwords',
         'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
         'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
@@ -39,21 +39,21 @@ def download_nltk_data_for_analysis():
         try:
             nltk.data.find(resource_path, paths=[nltk_data_dir])
         except LookupError:
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True) # Tambahkan quiet=True
+            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True)
 
     # --- Explicitly load Indonesian PunktSentenceTokenizer ---
+    # Inisialisasi di sini, akan diisi di blok try/except
+    st.session_state._indonesian_punkt_tokenizer = None
     try:
-        # Gunakan nltk.data.find untuk menemukan jalur aktual dari indonesian.pickle
-        # Ini lebih andal karena NLTK tahu di mana ia menyimpannya
         indonesian_punkt_file = nltk.data.find('tokenizers/punkt/indonesian.pickle', paths=[nltk_data_dir])
         with open(indonesian_punkt_file, 'rb') as f:
             st.session_state._indonesian_punkt_tokenizer = pickle.load(f)
-        st.success("Indonesian Punkt tokenizer loaded successfully.") # Pesan sukses ini bisa dihapus jika benar-benar tidak ingin ada notifikasi
+        # st.success("Indonesian Punkt tokenizer loaded successfully.") # Hapus notifikasi ini
     except LookupError:
-        st.error("Indonesian Punkt tokenizer pickle not found after 'punkt' download. Sentence tokenization for Indonesian might fail.")
+        st.error("Indonesian Punkt tokenizer pickle not found after 'punkt' download. Sentence tokenization for Indonesian will fail.")
         st.session_state._indonesian_punkt_tokenizer = None
     except Exception as e:
-        st.error(f"Error loading Indonesian Punkt tokenizer: {e}. Sentence tokenization for Indonesian might fail.")
+        st.error(f"Error loading Indonesian Punkt tokenizer: {e}. Sentence tokenization for Indonesian will fail.")
         st.session_state._indonesian_punkt_tokenizer = None
 
 download_nltk_data_for_analysis()
@@ -67,9 +67,10 @@ def summarize_text_tfidf(text, num_sentences=5):
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
-        # Fallback ke tokenizer generik (default English) jika yang spesifik Indonesia gagal
-        st.warning("Menggunakan sentence tokenizer generik karena yang spesifik Indonesia tidak tersedia. Akurasi mungkin terpengaruh.")
-        sentences = nltk.sent_tokenize(text) # Tanpa argumen 'language'
+        # Jika tokenizer Indonesia gagal dimuat, kita tidak bisa melakukan sentence tokenization yang benar.
+        # Kembalikan pesan kesalahan atau seluruh teks sebagai satu "kalimat".
+        st.error("Peringkasan gagal: Indonesian Punkt tokenizer tidak tersedia.")
+        return "Gagal meringkas: Indonesian Punkt tokenizer tidak tersedia."
 
     if len(sentences) <= num_sentences:
         return text # Jika teks pendek, kembalikan seluruh teks
@@ -112,8 +113,8 @@ def perform_ner_nltk(text):
     if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
         sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
     else:
-        st.warning("Menggunakan sentence tokenizer generik untuk NER karena yang spesifik Indonesia tidak tersedia. Akurasi mungkin terpengaruh.")
-        sentences = nltk.sent_tokenize(text) # Tanpa argumen 'language'
+        st.error("NER gagal: Indonesian Punkt tokenizer tidak tersedia.")
+        return [] # Jika tokenizer Indonesia gagal dimuat, kembalikan daftar kosong untuk NER
 
     all_named_entities = []
     for sentence in sentences:
