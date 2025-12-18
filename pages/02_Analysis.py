@@ -78,11 +78,31 @@ def extract_entities(text, max_chars=2000):
     except Exception:
         return []
 
+def extract_sentence_relations(text, entities):
+    """
+    Membuat relasi antar entitas jika muncul
+    dalam kalimat yang sama.
+    """
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    relations = set()
+
+    entity_names = [e[0] for e in entities]
+
+    for sent in sentences:
+        present = [e for e in entity_names if e in sent]
+        for i in range(len(present)):
+            for j in range(i + 1, len(present)):
+                relations.add((present[i], present[j]))
+
+    return list(relations)
+
 # =========================================================
 # KNOWLEDGE GRAPH (LIMITED – MEMORY SAFE)
 # =========================================================
-def render_knowledge_graph(entities, max_nodes=20):
-    unique_entities = list(dict.fromkeys(entities))[:max_nodes]
+def render_knowledge_graph(text, entities, max_nodes=20):
+    entities = list(dict.fromkeys(entities))[:max_nodes]
+
+    relations = extract_sentence_relations(text, entities)
 
     net = Network(
         height="600px",
@@ -90,14 +110,26 @@ def render_knowledge_graph(entities, max_nodes=20):
         font_color="black"
     )
 
-    for entity, label in unique_entities:
-        net.add_node(entity, label=entity, title=label)
-
-    for i in range(len(unique_entities) - 1):
-        net.add_edge(
-            unique_entities[i][0],
-            unique_entities[i + 1][0]
+    # Tambahkan node
+    for entity, label in entities:
+        net.add_node(
+            entity,
+            label=entity,
+            title=label
         )
+
+    # Tambahkan edge berbasis kalimat
+    for src, tgt in relations:
+        net.add_edge(
+            src,
+            tgt,
+            label="co-mentioned"
+        )
+
+    if not relations:
+        # fallback minimal agar graph tidak kosong
+        for i in range(len(entities) - 1):
+            net.add_edge(entities[i][0], entities[i + 1][0], label="related")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
         net.save_graph(tmp.name)
@@ -164,7 +196,7 @@ else:
 # -----------------------------
 st.subheader("Knowledge Graph")
 if entities:
-    render_knowledge_graph(entities)
+    render_knowledge_graph(content, entities)
 else:
     st.info("Knowledge Graph tidak dapat dibuat karena entitas kosong.")
 
