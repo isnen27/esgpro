@@ -135,11 +135,29 @@ st.write(summary)
 st.subheader("Named Entity Recognition (NER)")
 entities = extract_entities(content)
 
-if entities:
-    df_entities = pd.DataFrame(entities, columns=["Entity", "Type"])
-    st.dataframe(df_entities, use_container_width=True)
-else:
+if not entities:
     st.info("Tidak ditemukan entitas atau terjadi kegagalan ekstraksi.")
+else:
+    df = pd.DataFrame(entities, columns=["Entity", "Type"])
+    df = df.drop_duplicates()
+
+    ENTITY_LABELS = {
+        "PER": "Person",
+        "ORG": "Organization",
+        "LOC": "Location",
+        "MISC": "Miscellaneous"
+    }
+
+    for ent_type, label in ENTITY_LABELS.items():
+        subset = df[df["Type"] == ent_type]
+
+        if not subset.empty:
+            st.markdown(f"#### {label}")
+            st.dataframe(
+                subset[["Entity"]],
+                use_container_width=True,
+                hide_index=True
+            )
 
 # -----------------------------
 # KNOWLEDGE GRAPH
