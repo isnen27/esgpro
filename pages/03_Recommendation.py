@@ -14,12 +14,12 @@ st.set_page_config(
 
 st.title("Rekomendasi Strategis Berbasis Sentimen ESG")
 st.write(
-    "Halaman ini memberikan **rekomendasi tindakan** berdasarkan "
+    "Halaman ini memberikan rekomendasi tindakan berdasarkan "
     "hasil prediksi sentimen Environment, Social, dan Governance."
 )
 
 # =====================================================
-# SENTIMENT MAPPING
+# SENTIMENT & RECOMMENDATION MAPPING
 # =====================================================
 SENTIMENT_MAP = {
     1: "Neutral",
@@ -30,13 +30,13 @@ SENTIMENT_MAP = {
 RECOMMENDATION_MAP = {
     "Positive": (
         "Sentimen positif terdeteksi. "
-        "Disarankan untuk **mempertahankan praktik yang ada**, "
-        "melanjutkan komunikasi publik, dan memperkuat narasi positif."
+        "Disarankan untuk **mempertahankan dan memperkuat praktik yang ada**, "
+        "serta melanjutkan komunikasi publik secara konsisten."
     ),
     "Neutral": (
         "Sentimen netral terdeteksi. "
         "Disarankan untuk **melakukan mitigasi risiko**, "
-        "meningkatkan transparansi, serta memantau isu secara berkala."
+        "meningkatkan transparansi, dan memantau isu secara berkala."
     ),
     "Negative": (
         "Sentimen negatif terdeteksi. "
@@ -46,7 +46,7 @@ RECOMMENDATION_MAP = {
 }
 
 # =====================================================
-# LOAD STOPWORDS (ROOT REPO)
+# LOAD STOPWORDS
 # =====================================================
 @st.cache_data
 def load_stopwords():
@@ -76,7 +76,7 @@ def load_models():
     return (
         joblib.load("model_Y1_sentiment_environment_RandomForest.joblib"),
         joblib.load("model_Y2_sentiment_social_RandomForest.joblib"),
-        joblib.load("model_Y3_sentiment_governance_RandomForest.joblib")
+        joblib.load("model_Y3_sentiment_governance_RandomForest.joblib"),
     )
 
 model_env, model_soc, model_gov = load_models()
@@ -91,13 +91,17 @@ def load_vectorizer():
 vectorizer = load_vectorizer()
 
 # =====================================================
-# VALIDATE SESSION DATA
+# VALIDATE SESSION STATE
 # =====================================================
-if "crawled_content" not in st.session_state or not st.session_state.crawled_content:
+if (
+    "crawled_data" not in st.session_state
+    or not st.session_state.crawled_data
+    or "crawled_content" not in st.session_state.crawled_data
+):
     st.warning("⚠️ Artikel belum tersedia. Silakan lakukan crawling terlebih dahulu.")
     st.stop()
 
-raw_text = st.session_state.crawled_content
+raw_text = st.session_state.crawled_data["crawled_content"]
 
 # =====================================================
 # DISPLAY ARTICLE
@@ -131,12 +135,11 @@ label_soc = SENTIMENT_MAP.get(y_soc, "Unknown")
 label_gov = SENTIMENT_MAP.get(y_gov, "Unknown")
 
 # =====================================================
-# DISPLAY SENTIMENT RESULTS
+# DISPLAY SENTIMENT
 # =====================================================
 st.subheader("Hasil Prediksi Sentimen ESG")
 
 col1, col2, col3 = st.columns(3)
-
 col1.metric("Environment", label_env)
 col2.metric("Social", label_soc)
 col3.metric("Governance", label_gov)
@@ -155,8 +158,6 @@ show_recommendation("Social", label_soc)
 show_recommendation("Governance", label_gov)
 
 # =====================================================
-# FINAL SUMMARY
+# FINAL MESSAGE
 # =====================================================
-st.success(
-    "Analisis sentimen dan rekomendasi strategis ESG berhasil dibuat."
-)
+st.success("Analisis sentimen dan rekomendasi strategis ESG berhasil ditampilkan.")
