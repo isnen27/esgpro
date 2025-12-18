@@ -41,8 +41,10 @@ def classify_keyword(title):
 # =========================================================
 @st.cache_resource
 def load_semantic_model():
-    return SentenceTransformer("indobenchmark/indobert-lite-p2")
-
+    return SentenceTransformer(
+        "indobenchmark/indobert-lite-p1",
+        device="cpu"
+    )
 semantic_model = load_semantic_model()
 
 THEMES = {
