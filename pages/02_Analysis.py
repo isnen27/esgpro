@@ -1,210 +1,229 @@
-# pages/02_Analysis.py
 import streamlit as st
 import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize # Keep for NER (will try to use English Punkt)
-from nltk.tag import pos_tag
-from nltk.chunk import ne_chunk
-from sklearn.feature_extraction.text import TfidfVectorizer
-import string
-import heapq
 import os
-import pickle
-import re # PENTING: Impor modul regex
-from nltk.tokenize.punkt import PunktSentenceTokenizer # Impor kelas ini secara spesifik
+import re
+import heapq
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
+import pandas as pd
+import networkx as nx
+from pyvis.network import Network
+import tempfile
+import streamlit.components.v1 as components
 
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 st.set_page_config(layout="wide", page_title="ESG Analysis")
 st.title("ESG Analysis Page")
-
 st.markdown("---")
 
-# --- NLTK Data Downloads (Cached) ---
+# =========================================================
+# NLTK SETUP (STOPWORDS SAJA)
+# =========================================================
 @st.cache_resource
-def download_nltk_data_for_analysis():
-    """Mengunduh data NLTK yang diperlukan untuk analisis (cached)."""
+def download_nltk_stopwords():
     nltk_data_dir = os.path.join(os.getcwd(), "nltk_data")
-    if nltk_data_dir not in nltk.data.path:
-        nltk.data.path.append(nltk_data_dir)
+    os.environ["NLTK_DATA"] = nltk_data_dir
     os.makedirs(nltk_data_dir, exist_ok=True)
 
-    # List of NLTK resources to download
-    resources = {
-        'punkt': 'tokenizers/punkt', # This downloads the 'punkt' directory which contains language pickles
-        'stopwords': 'corpora/stopwords',
-        'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
-        'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
-        'words': 'corpora/words', # Required by maxent_ne_chunker
-    }
-
-    for resource_name, resource_path in resources.items():
-        try:
-            nltk.data.find(resource_path, paths=[nltk_data_dir])
-        except LookupError:
-            nltk.download(resource_name, download_dir=nltk_data_dir, quiet=True)
-
-    # --- Explicitly load Indonesian PunktSentenceTokenizer ---
-    st.session_state._indonesian_punkt_tokenizer = None
     try:
-        expected_indonesian_punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt', 'indonesian.pickle')
-        if os.path.exists(expected_indonesian_punkt_path):
-            with open(expected_indonesian_punkt_path, 'rb') as f:
-                st.session_state._indonesian_punkt_tokenizer = pickle.load(f)
-        else:
-            st.warning(f"Peringatan: indonesian.pickle tidak ditemukan di {expected_indonesian_punkt_path}. "
-                       "Akan menggunakan tokenizer kalimat sederhana untuk Bahasa Indonesia, yang mungkin kurang akurat.")
-    except Exception as e:
-        st.warning(f"Peringatan: Gagal memuat Indonesian Punkt tokenizer: {e}. "
-                   "Akan menggunakan tokenizer kalimat sederhana untuk Bahasa Indonesia, yang mungkin kurang akurat.")
+        nltk.data.find("corpora/stopwords")
+    except LookupError:
+        nltk.download("stopwords", download_dir=nltk_data_dir, quiet=True)
 
-    # --- Explicitly load English PunktSentenceTokenizer for NER's word_tokenize ---
-    # This is crucial if nltk.word_tokenize(..., language='english') is used later
-    st.session_state._english_punkt_tokenizer = None
-    try:
-        expected_english_punkt_path = os.path.join(nltk_data_dir, 'tokenizers', 'punkt', 'english.pickle')
-        if os.path.exists(expected_english_punkt_path):
-            with open(expected_english_punkt_path, 'rb') as f:
-                st.session_state._english_punkt_tokenizer = pickle.load(f)
-        else:
-            st.warning(f"Peringatan: english.pickle tidak ditemukan di {expected_english_punkt_path}. "
-                       "NER NLTK mungkin tidak berfungsi dengan baik karena word_tokenize(language='english') bergantung padanya.")
-    except Exception as e:
-        st.warning(f"Peringatan: Gagal memuat English Punkt tokenizer: {e}. "
-                   "NER NLTK mungkin tidak berfungsi dengan baik karena word_tokenize(language='english') bergantung padanya.")
+download_nltk_stopwords()
 
-download_nltk_data_for_analysis()
-
-# --- Custom Sentence Tokenizer Fallback (Regex) ---
+# =========================================================
+# SIMPLE SENTENCE TOKENIZER
+# =========================================================
 def simple_sentence_tokenize(text):
-    # Very basic regex to split sentences. Not as robust as NLTK Punkt.
     sentences = re.split(r'(?<=[.!?])\s+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
-    if not sentences: # If splitting fails, treat entire text as one sentence
-        sentences = [text]
-    return sentences
+    return sentences if sentences else [text]
 
-# --- Fungsi untuk peringkasan TF-IDF ---
+# =========================================================
+# TF-IDF SUMMARIZATION (DIPERTAHANKAN)
+# =========================================================
 def summarize_text_tfidf(text, num_sentences=5):
-    if not text or len(text.strip()) == 0:
+    if not text or not text.strip():
         return "Tidak ada konten untuk diringkas."
 
-    sentences = []
-    if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
-        sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
-    else:
-        sentences = simple_sentence_tokenize(text)
-        # st.warning("Menggunakan tokenizer kalimat sederhana untuk peringkasan.") # Hapus notifikasi ini jika terlalu sering muncul
-
+    sentences = simple_sentence_tokenize(text)
     if len(sentences) <= num_sentences:
         return text
 
-    stop_words_id = set(stopwords.words('indonesian'))
-    
+    stop_words_id = set(stopwords.words("indonesian"))
+
     def preprocess(sentence):
-        # Use regex for word tokenization to completely avoid NLTK's internal punkt dependency here
         words = re.findall(r'\b\w+\b', sentence.lower())
-        return [word for word in words if word.isalnum() and word not in stop_words_id]
+        return [w for w in words if w.isalnum() and w not in stop_words_id]
 
     vectorizer = TfidfVectorizer(tokenizer=preprocess, stop_words=list(stop_words_id))
-    
+
     try:
         tfidf_matrix = vectorizer.fit_transform(sentences)
     except ValueError:
-        return "Tidak dapat meringkas. Konten mungkin terlalu pendek atau tidak relevan."
+        return "Tidak dapat meringkas konten."
 
-    sentence_scores = {}
-    for i, sentence in enumerate(sentences):
-        score = tfidf_matrix[i].sum() 
-        sentence_scores[sentence] = score
+    sentence_scores = {
+        sentence: tfidf_matrix[i].sum()
+        for i, sentence in enumerate(sentences)
+    }
 
-    best_sentences = heapq.nlargest(num_sentences, sentence_scores, key=sentence_scores.get)
-    
-    return ' '.join(best_sentences)
+    best_sentences = heapq.nlargest(
+        num_sentences, sentence_scores, key=sentence_scores.get
+    )
 
-# --- Fungsi untuk NER menggunakan NLTK ---
-def perform_ner_nltk(text):
-    if not text or len(text.strip()) == 0:
+    return " ".join(best_sentences)
+
+# =========================================================
+# TRANSFORMER INDONESIAN NER
+# =========================================================
+@st.cache_resource
+def load_indo_ner_model():
+    model_name = "cahya/bert-base-indonesian-NER"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForTokenClassification.from_pretrained(model_name)
+
+    return pipeline(
+        "ner",
+        model=model,
+        tokenizer=tokenizer,
+        aggregation_strategy="simple"
+    )
+
+def perform_ner_transformer(text):
+    if not text or not text.strip():
         return []
 
-    sentences = []
-    if '_indonesian_punkt_tokenizer' in st.session_state and st.session_state._indonesian_punkt_tokenizer:
-        sentences = st.session_state._indonesian_punkt_tokenizer.tokenize(text)
-    else:
-        sentences = simple_sentence_tokenize(text)
-        # st.warning("Menggunakan tokenizer kalimat sederhana untuk NER.") # Hapus notifikasi ini jika terlalu sering muncul
+    ner_pipeline = load_indo_ner_model()
+    results = ner_pipeline(text)
+    return [(r["word"], r["entity_group"]) for r in results]
 
-    all_named_entities = []
-    for sentence in sentences:
-        # For NER, we need NLTK's word tokenizer and POS tagger
-        # This still relies on English Punkt being loadable for word_tokenize(..., language='english')
-        try:
-            words = word_tokenize(sentence, language='english') 
-            tagged_words = pos_tag(words, lang='eng')
-        except LookupError:
-            st.error("Gagal melakukan word tokenization/POS tagging untuk NER. Pastikan English Punkt dan Averaged Perceptron Tagger diunduh.")
-            continue # Skip this sentence if tokenization fails
-        except Exception as e:
-            st.error(f"Error saat word tokenization/POS tagging untuk NER: {e}. Melewatkan kalimat ini.")
-            continue
+# =========================================================
+# KNOWLEDGE GRAPH BUILDER
+# =========================================================
+def build_knowledge_graph(entities):
+    G = nx.Graph()
 
-        tree = ne_chunk(tagged_words) 
+    unique_entities = {}
+    for entity, ent_type in entities:
+        unique_entities[entity] = ent_type
 
-        for subtree in tree.subtrees():
-            if hasattr(subtree, 'label') and subtree.label() != 'S':
-                entity_type = subtree.label()
-                entity_name = " ".join([word for word, tag in subtree.leaves()])
-                all_named_entities.append((entity_name, entity_type))
-    
-    return all_named_entities
+    for entity, ent_type in unique_entities.items():
+        G.add_node(entity, label=entity, group=ent_type)
 
-# Cek apakah ada data di session_state dari halaman sebelumnya
-if st.session_state.crawled_data and st.session_state.final_esg_category:
-    st.success("Data artikel berhasil dimuat dari sesi screening!")
-    
+    entity_list = list(unique_entities.keys())
+    for i in range(len(entity_list)):
+        for j in range(i + 1, len(entity_list)):
+            G.add_edge(entity_list[i], entity_list[j])
+
+    return G
+
+def visualize_knowledge_graph(G):
+    net = Network(
+        height="600px",
+        width="100%",
+        bgcolor="#ffffff",
+        font_color="black"
+    )
+
+    net.force_atlas_2based()
+
+    for node, data in G.nodes(data=True):
+        net.add_node(
+            node,
+            label=data.get("label"),
+            group=data.get("group"),
+            title=data.get("group")
+        )
+
+    for source, target in G.edges():
+        net.add_edge(source, target)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp_file:
+        net.save_graph(tmp_file.name)
+        html_path = tmp_file.name
+
+    with open(html_path, "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    components.html(html_content, height=650, scrolling=True)
+
+# =========================================================
+# MAIN PAGE
+# =========================================================
+if (
+    "crawled_data" in st.session_state
+    and st.session_state.crawled_data
+    and "final_esg_category" in st.session_state
+    and st.session_state.final_esg_category
+):
     crawled_url = st.session_state.crawled_url
-    crawled_title = st.session_state.crawled_data['crawled_title']
-    crawled_date = st.session_state.crawled_data['crawled_date']
-    crawled_content = st.session_state.crawled_data['crawled_content']
+    crawled_title = st.session_state.crawled_data["crawled_title"]
+    crawled_date = st.session_state.crawled_data["crawled_date"]
+    crawled_content = st.session_state.crawled_data["crawled_content"]
     final_esg_category = st.session_state.final_esg_category
 
-    st.markdown("### Artikel yang Sedang Dianalisis:")
-    st.write(f"**URL Artikel:** {crawled_url}")
-    st.write(f"**Judul Artikel:** {crawled_title}")
+    st.markdown("### Artikel yang Dianalisis")
+    st.write(f"**URL:** {crawled_url}")
+    st.write(f"**Judul:** {crawled_title}")
     st.write(f"**Tanggal Publikasi:** {crawled_date}")
-    st.write(f"**Kategori ESG Akhir:** {final_esg_category}")
-    
+    st.write(f"**Kategori ESG:** {final_esg_category}")
+
     with st.expander("Lihat Isi Artikel Lengkap"):
         st.write(crawled_content)
 
     st.markdown("---")
-    st.markdown("#### Hasil Analisis Detail")
+    st.markdown("### Hasil Analisis")
 
-    # --- TF-IDF Summarization ---
-    st.subheader("Peringkasan Artikel (TF-IDF)")
-    num_sentences_summary = st.slider("Jumlah kalimat untuk ringkasan:", min_value=1, max_value=10, value=5)
-    with st.spinner("Membuat ringkasan artikel..."):
-        summary = summarize_text_tfidf(crawled_content, num_sentences=num_sentences_summary)
-    st.write(summary)
+    # -------------------------
+    # SUMMARY
+    # -------------------------
+    st.subheader("Ringkasan Artikel (TF-IDF)")
+    num_sentences_summary = st.slider(
+        "Jumlah kalimat ringkasan",
+        min_value=1,
+        max_value=10,
+        value=5
+    )
+    st.write(
+        summarize_text_tfidf(
+            crawled_content,
+            num_sentences=num_sentences_summary
+        )
+    )
 
-    # --- NLTK NER ---
-    st.subheader("Named Entity Recognition (NER) dengan NLTK")
-    st.warning("Catatan: NLTK's `ne_chunk` primernya dilatih untuk Bahasa Inggris dan bekerja paling baik dengan POS tag Bahasa Inggris. Akurasi untuk Bahasa Indonesia mungkin terbatas.")
-    with st.spinner("Mengekstrak entitas nama..."):
-        entities = perform_ner_nltk(crawled_content)
-    
+    # -------------------------
+    # NER
+    # -------------------------
+    st.subheader("Named Entity Recognition (IndoNER)")
+    entities = perform_ner_transformer(crawled_content)
+
     if entities:
-        import pandas as pd
-        entity_df = pd.DataFrame(entities, columns=['Entity', 'Type'])
-        st.dataframe(entity_df)
+        df_entities = pd.DataFrame(entities, columns=["Entity", "Type"])
+        st.dataframe(df_entities, use_container_width=True)
     else:
-        st.info("Tidak ada entitas nama yang terdeteksi dalam artikel.")
+        st.write("Tidak ada entitas terdeteksi.")
+
+    # -------------------------
+    # KNOWLEDGE GRAPH
+    # -------------------------
+    st.subheader("Knowledge Graph Entitas")
+    if entities:
+        G = build_knowledge_graph(entities)
+        visualize_knowledge_graph(G)
+    else:
+        st.write("Knowledge Graph tidak dapat dibuat.")
 
     st.markdown("---")
-    if st.button("Bersihkan Data & Kembali ke Screening"):
+    if st.button("Bersihkan Data & Kembali"):
         st.session_state.crawled_data = None
         st.session_state.final_esg_category = None
         st.session_state.crawled_url = None
-        st.warning("Data sesi telah dihapus. Silakan gunakan sidebar untuk kembali ke halaman utama untuk screening baru.")
         st.rerun()
+
 else:
-    st.warning("Tidak ada data artikel yang tersedia untuk analisis. Silakan kembali ke halaman utama untuk melakukan screening terlebih dahulu.")
-    st.info("Gunakan sidebar di kiri untuk navigasi.")
+    st.write("Tidak ada data artikel untuk dianalisis.")
