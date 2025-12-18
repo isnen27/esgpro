@@ -2,7 +2,6 @@ import streamlit as st
 import re
 import joblib
 import os
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 # =====================================================
 # PAGE CONFIG
@@ -13,10 +12,6 @@ st.set_page_config(
 )
 
 st.title("Rekomendasi Strategis Berbasis Sentimen ESG")
-st.write(
-    "Halaman ini memberikan rekomendasi tindakan berdasarkan "
-    "hasil prediksi sentimen Environment, Social, dan Governance."
-)
 
 # =====================================================
 # SENTIMENT & RECOMMENDATION MAPPING
@@ -30,18 +25,15 @@ SENTIMENT_MAP = {
 RECOMMENDATION_MAP = {
     "Positive": (
         "Sentimen positif terdeteksi. "
-        "Disarankan untuk **mempertahankan dan memperkuat praktik yang ada**, "
-        "serta melanjutkan komunikasi publik secara konsisten."
+        "Pertahankan dan perkuat praktik ESG serta komunikasi publik."
     ),
     "Neutral": (
         "Sentimen netral terdeteksi. "
-        "Disarankan untuk **melakukan mitigasi risiko**, "
-        "meningkatkan transparansi, dan memantau isu secara berkala."
+        "Lakukan mitigasi risiko dan pemantauan isu secara berkala."
     ),
     "Negative": (
         "Sentimen negatif terdeteksi. "
-        "Disarankan untuk **melakukan counter issue**, "
-        "mengambil tindakan korektif, dan menyiapkan strategi komunikasi krisis."
+        "Lakukan counter issue, tindakan korektif, dan strategi komunikasi krisis."
     )
 }
 
@@ -50,16 +42,13 @@ RECOMMENDATION_MAP = {
 # =====================================================
 @st.cache_data
 def load_stopwords():
-    path = "stopword.txt"
-    if not os.path.exists(path):
-        return set()
-    with open(path, "r", encoding="utf-8") as f:
+    with open("stopword.txt", encoding="utf-8") as f:
         return set(w.strip().lower() for w in f if w.strip())
 
 STOPWORDS = load_stopwords()
 
 # =====================================================
-# TEXT PREPROCESSING
+# PREPROCESSING (HARUS SAMA DENGAN TRAINING)
 # =====================================================
 def preprocess_text(text: str) -> str:
     text = text.lower()
@@ -69,33 +58,24 @@ def preprocess_text(text: str) -> str:
     return " ".join(tokens)
 
 # =====================================================
-# LOAD MODELS
+# LOAD MODELS & TF-IDF (INI KUNCI UTAMA)
 # =====================================================
 @st.cache_resource
-def load_models():
+def load_artifacts():
     return (
+        joblib.load("tfidf_vectorizer.joblib"),
         joblib.load("model_Y1_sentiment_environment_RandomForest.joblib"),
         joblib.load("model_Y2_sentiment_social_RandomForest.joblib"),
         joblib.load("model_Y3_sentiment_governance_RandomForest.joblib"),
     )
 
-model_env, model_soc, model_gov = load_models()
-
-# =====================================================
-# TF-IDF VECTORIZER
-# =====================================================
-@st.cache_resource
-def load_vectorizer():
-    return TfidfVectorizer()
-
-vectorizer = load_vectorizer()
+vectorizer, model_env, model_soc, model_gov = load_artifacts()
 
 # =====================================================
 # VALIDATE SESSION STATE
 # =====================================================
 if (
     "crawled_data" not in st.session_state
-    or not st.session_state.crawled_data
     or "crawled_content" not in st.session_state.crawled_data
 ):
     st.warning("⚠️ Artikel belum tersedia. Silakan lakukan crawling terlebih dahulu.")
@@ -111,17 +91,10 @@ with st.expander("Tampilkan isi artikel"):
     st.write(raw_text)
 
 # =====================================================
-# PREPROCESSING
+# PREPROCESS + VECTORIZE (TRANSFORM, BUKAN FIT)
 # =====================================================
 processed_text = preprocess_text(raw_text)
-
-st.subheader("Hasil Preprocessing (Corpus)")
-st.code(processed_text[:1200] + ("..." if len(processed_text) > 1200 else ""))
-
-# =====================================================
-# VECTORIZE
-# =====================================================
-X = vectorizer.fit_transform([processed_text])
+X = vectorizer.transform([processed_text])
 
 # =====================================================
 # PREDICTION
@@ -130,12 +103,12 @@ y_env = int(model_env.predict(X)[0])
 y_soc = int(model_soc.predict(X)[0])
 y_gov = int(model_gov.predict(X)[0])
 
-label_env = SENTIMENT_MAP.get(y_env, "Unknown")
-label_soc = SENTIMENT_MAP.get(y_soc, "Unknown")
-label_gov = SENTIMENT_MAP.get(y_gov, "Unknown")
+label_env = SENTIMENT_MAP[y_env]
+label_soc = SENTIMENT_MAP[y_soc]
+label_gov = SENTIMENT_MAP[y_gov]
 
 # =====================================================
-# DISPLAY SENTIMENT
+# DISPLAY RESULT
 # =====================================================
 st.subheader("Hasil Prediksi Sentimen ESG")
 
@@ -145,19 +118,17 @@ col2.metric("Social", label_soc)
 col3.metric("Governance", label_gov)
 
 # =====================================================
-# STRATEGIC RECOMMENDATION
+# RECOMMENDATION
 # =====================================================
 st.subheader("Rekomendasi Strategis")
 
-def show_recommendation(aspect, sentiment):
-    st.markdown(f"**{aspect}**")
-    st.write(RECOMMENDATION_MAP.get(sentiment, "Tidak ada rekomendasi."))
+st.markdown("**Environment**")
+st.write(RECOMMENDATION_MAP[label_env])
 
-show_recommendation("Environment", label_env)
-show_recommendation("Social", label_soc)
-show_recommendation("Governance", label_gov)
+st.markdown("**Social**")
+st.write(RECOMMENDATION_MAP[label_soc])
 
-# =====================================================
-# FINAL MESSAGE
-# =====================================================
-st.success("Analisis sentimen dan rekomendasi strategis ESG berhasil ditampilkan.")
+st.markdown("**Governance**")
+st.write(RECOMMENDATION_MAP[label_gov])
+
+st.success("Analisis sentimen dan rekomendasi berhasil dibuat.")
