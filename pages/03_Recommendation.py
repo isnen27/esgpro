@@ -57,9 +57,9 @@ X = vectorizer.transform([processed])
 LABEL = {1: "Neutral", 2: "Positive", 3: "Negative"}
 EMOJI = {"Positive": "🟢", "Neutral": "🟡", "Negative": "🔴"}
 RECO = {
-    "Positive": "Pertahankan dan perkuat praktik ESG.",
-    "Neutral": "Lakukan mitigasi risiko dan monitoring.",
-    "Negative": "Lakukan counter issue dan perbaikan kebijakan."
+    "Positive": "Pertahankan strategi dan komunikasi ESG yang sudah berjalan dengan baik.",
+    "Neutral": "Lakukan mitigasi risiko dan perkuat kebijakan ESG untuk mencegah isu berkembang.",
+    "Negative": "Segera lakukan counter issue, perbaikan kebijakan, dan komunikasi krisis ESG."
 }
 
 scores = {
@@ -83,10 +83,10 @@ elif "Neutral" in scores.values():
 else:
     risk = "🟢 LOW RISK"
 
-st.subheader("Overall ESG Risk Level")
+st.subheader("📈 Overall ESG Risk Level")
 st.info(risk)
 
-st.subheader("🧭 Rekomendasi")
+st.subheader("🧭 Rekomendasi Strategis")
 for k, v in scores.items():
     st.markdown(f"**{k}** → {RECO[v]}")
 
