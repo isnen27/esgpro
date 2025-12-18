@@ -62,12 +62,12 @@ def summarize(text, n=5):
 @st.cache_resource
 def load_ner_model():
     return pipeline(
-        "ner",
-        model="cahya/indobert-lite-ner",
+        task="ner",
+        model="Davlan/bert-base-multilingual-cased-ner-hrl",
         aggregation_strategy="simple",
         device=-1
     )
-
+    
 def extract_entities(text, max_chars=2000):
     ner = load_ner_model()
     text = text[:max_chars]
