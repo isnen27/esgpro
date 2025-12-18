@@ -18,3 +18,4 @@ transformers
 networkx
 pyvis
 einops
+sentencepiece
