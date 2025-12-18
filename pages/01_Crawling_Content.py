@@ -20,7 +20,7 @@ for key in ["crawled_data", "final_esg_category", "crawled_url"]:
         st.session_state[key] = None
 
 # =========================================================
-# ESG KEYWORDS (RINGAN)
+# ESG KEYWORDS (INDONESIA)
 # =========================================================
 ENV = ["iklim", "lingkungan", "emisi", "energi", "karbon", "hutan"]
 SOC = ["sosial", "masyarakat", "pendidikan", "kesehatan", "karyawan"]
@@ -49,9 +49,18 @@ def load_semantic_model():
 semantic_model = load_semantic_model()
 
 THEMES = {
-    "Environment": ["climate change", "renewable energy", "environmental impact"],
-    "Social": ["social responsibility", "public welfare", "human rights"],
-    "Governance": ["corporate governance", "transparency", "anti corruption"]
+    "Environment": [
+        "perubahan iklim", "energi terbarukan",
+        "dampak lingkungan", "emisi karbon"
+    ],
+    "Social": [
+        "tanggung jawab sosial", "kesejahteraan masyarakat",
+        "hak asasi manusia", "kesehatan publik"
+    ],
+    "Governance": [
+        "tata kelola perusahaan", "transparansi",
+        "anti korupsi", "etika bisnis"
+    ]
 }
 
 THEME_EMB = {
@@ -69,111 +78,163 @@ def semantic_classification(title):
     return best, scores[best]
 
 # =========================================================
-# CRAWLERS PER WEBSITE
+# CRAWLER: KOMPAS.COM 
 # =========================================================
+@st.cache_data(ttl=3600)
 def crawl_kompas(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "lxml")
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/100.0.4896.127 Safari/537.36"
+            )
+        }
 
-    title = soup.find("h1")
-    date = soup.find("time")
-    content = soup.find("div", class_=re.compile("read__content"))
+        req = requests.get(url, headers=headers, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, "lxml")
 
-    return {
-        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
-        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
-        "crawled_content": " ".join(
-            p.get_text(strip=True) for p in content.find_all("p")
-        ) if content else ""
-    }
+        title_tag = soup.find("h1", class_="read__title") or soup.find("h1")
+        crawled_title = title_tag.get_text(strip=True) if title_tag else "Tidak ada judul"
 
+        date_tag = soup.find("div", class_="read__time") or soup.find("time")
+        crawled_date = date_tag.get_text(strip=True) if date_tag else "Tidak ada tanggal"
+
+        full_text = ""
+        main_div = soup.find("div", class_="read__content")
+
+        if main_div:
+            paragraphs = main_div.find_all("p")
+            full_text = " ".join(p.get_text(strip=True) for p in paragraphs)
+        else:
+            fallback = soup.find("article") or soup.find("div", class_="clearfix")
+            if fallback:
+                paragraphs = fallback.find_all("p")
+                full_text = " ".join(p.get_text(strip=True) for p in paragraphs)
+
+        unwanted_patterns = [
+            r"Baca juga :.*", r"Penulis :.*", r"Editor :.*",
+            r"Sumber :.*", r"Ikuti kami.*", r"Simak berita.*"
+        ]
+
+        for p in unwanted_patterns:
+            full_text = re.sub(p, "", full_text, flags=re.IGNORECASE | re.DOTALL)
+
+        full_text = re.sub(r"\s+", " ", full_text).strip()
+
+        return {
+            "crawled_title": crawled_title,
+            "crawled_date": crawled_date,
+            "crawled_content": full_text or "Tidak ada konten"
+        }
+
+    except Exception as e:
+        return {
+            "crawled_title": "Gagal diakses",
+            "crawled_date": "Gagal diakses",
+            "crawled_content": f"Kesalahan: {e}"
+        }
+
+# =========================================================
+# CRAWLER: TRIBUNNEWS.COM 
+# =========================================================
+@st.cache_data(ttl=3600)
+def crawl_tribunnews(url):
+    try:
+        req = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, "lxml")
+
+        title = soup.find("h1") or soup.find("title")
+        date = soup.find("time")
+
+        content_div = soup.find("div", class_="side-article txt-article multi-fontsize")
+
+        text = content_div.get_text(" ", strip=True) if content_div else ""
+
+        return {
+            "crawled_title": title.get_text(strip=True) if title else "Tidak ada judul",
+            "crawled_date": date.get_text(strip=True) if date else "Tidak ada tanggal",
+            "crawled_content": text or "Tidak ada konten"
+        }
+
+    except Exception as e:
+        return {
+            "crawled_title": "Gagal diakses",
+            "crawled_date": "Gagal diakses",
+            "crawled_content": f"Kesalahan: {e}"
+        }
+
+# =========================================================
+# CRAWLER: DETIK.COM 
+# =========================================================
+@st.cache_data(ttl=3600)
 def crawl_detik(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "lxml")
+    try:
+        req = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        req.raise_for_status()
+        soup = BeautifulSoup(req.text, "lxml")
 
-    title = soup.find("h1")
-    date = soup.find("div", class_="detail__date")
-    content = soup.find("div", class_="detail__body-text")
+        title = soup.find("h1", class_="detail__title") or soup.find("title")
+        date = soup.find("div", class_="detail__date")
+        body = soup.find("div", class_="detail__body-text itp_bodycontent")
 
-    return {
-        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
-        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
-        "crawled_content": " ".join(
-            p.get_text(strip=True) for p in content.find_all("p")
-        ) if content else ""
-    }
+        paragraphs = body.find_all("p") if body else []
+        text = " ".join(p.get_text(strip=True) for p in paragraphs)
 
-def crawl_tribun(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "lxml")
+        return {
+            "crawled_title": title.get_text(strip=True) if title else "Tidak ada judul",
+            "crawled_date": date.get_text(strip=True) if date else "Tidak ada tanggal",
+            "crawled_content": text or "Tidak ada konten"
+        }
 
-    title = soup.find("h1")
-    date = soup.find("time")
-    content = soup.find("div", class_="side-article txt-article")
-
-    return {
-        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
-        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
-        "crawled_content": " ".join(
-            p.get_text(strip=True) for p in content.find_all("p")
-        ) if content else ""
-    }
+    except Exception as e:
+        return {
+            "crawled_title": "Gagal diakses",
+            "crawled_date": "Gagal diakses",
+            "crawled_content": f"Kesalahan: {e}"
+        }
 
 # =========================================================
 # UI
 # =========================================================
-st.title("Crawling Konten Artikel ESG")
+st.title("Crawling Artikel ESG")
 
 website = st.selectbox(
-    "Pilih Website Sumber",
-    ["Kompas.com", "Detik.com", "Tribunnews.com"]
+    "Pilih Website",
+    ["Kompas.com", "Tribunnews.com", "Detik.com"]
 )
 
 url = st.text_input("Masukkan URL Artikel")
 
-if st.button("Crawl Artikel"):
-    try:
-        if website == "Kompas.com":
-            data = crawl_kompas(url)
-        elif website == "Detik.com":
-            data = crawl_detik(url)
-        else:
-            data = crawl_tribun(url)
+if st.button("Crawl"):
+    if website == "Kompas.com":
+        data = crawl_kompas(url)
+    elif website == "Tribunnews.com":
+        data = crawl_tribunnews(url)
+    else:
+        data = crawl_detik(url)
 
-        # HARD LIMIT ISI (CLOUD SAFE)
-        data["crawled_content"] = data["crawled_content"][:5000]
+    # HARD LIMIT (CLOUD SAFE)
+    data["crawled_content"] = data["crawled_content"][:5000]
 
-        st.session_state.crawled_data = data
-        st.session_state.crawled_url = url
+    st.session_state.crawled_data = data
+    st.session_state.crawled_url = url
 
-        # ESG Classification
-        kw_cat = keyword_classification(data["crawled_title"])
-        sem_cat, score = semantic_classification(data["crawled_title"])
+    kw = keyword_classification(data["crawled_title"])
+    sem, score = semantic_classification(data["crawled_title"])
 
-        final_cat = kw_cat
-        if kw_cat == "Non-ESG" and score >= 0.45:
-            final_cat = sem_cat
+    final = kw if kw != "Non-ESG" or score < 0.45 else sem
+    st.session_state.final_esg_category = final
 
-        st.session_state.final_esg_category = final_cat
+    st.markdown("### Judul")
+    st.write(data["crawled_title"])
 
-        # =================================================
-        # DISPLAY
-        # =================================================
-        st.success("Artikel berhasil di-crawl")
+    st.markdown("### Tanggal Publikasi")
+    st.write(data["crawled_date"])
 
-        st.markdown("### Judul Artikel")
-        st.write(data["crawled_title"])
+    st.markdown("### Isi Artikel")
+    st.write(data["crawled_content"])
 
-        st.markdown("### Tanggal Publikasi")
-        st.write(data["crawled_date"])
-
-        st.markdown("### Isi Artikel")
-        st.write(data["crawled_content"])
-
-        st.markdown(f"### Kategori ESG: **{final_cat}**")
-
-    except Exception as e:
-        st.error("Gagal melakukan crawling. Pastikan URL dan website sesuai.")
+    st.markdown(f"### Kategori ESG: **{final}**")
