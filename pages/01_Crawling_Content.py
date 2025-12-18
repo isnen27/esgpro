@@ -42,7 +42,7 @@ def classify_keyword(title):
 @st.cache_resource
 def load_semantic_model():
     return SentenceTransformer(
-        "indobenchmark/indobert-lite-p1",
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         device="cpu"
     )
 semantic_model = load_semantic_model()
