@@ -2,6 +2,8 @@ import streamlit as st
 import re
 import joblib
 import os
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
 # =====================================================
 # PAGE CONFIG
@@ -11,10 +13,10 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Rekomendasi Strategis Berbasis Sentimen ESG")
+st.title("📊 ESG Sentiment & Strategic Recommendation")
 
 # =====================================================
-# SENTIMENT & RECOMMENDATION MAPPING
+# MAPPING
 # =====================================================
 SENTIMENT_MAP = {
     1: "Neutral",
@@ -22,19 +24,16 @@ SENTIMENT_MAP = {
     3: "Negative"
 }
 
+SENTIMENT_BADGE = {
+    "Positive": "🟢 Positive",
+    "Neutral": "🟡 Neutral",
+    "Negative": "🔴 Negative"
+}
+
 RECOMMENDATION_MAP = {
-    "Positive": (
-        "Sentimen positif terdeteksi. "
-        "Pertahankan dan perkuat praktik ESG serta komunikasi publik."
-    ),
-    "Neutral": (
-        "Sentimen netral terdeteksi. "
-        "Lakukan mitigasi risiko dan pemantauan isu secara berkala."
-    ),
-    "Negative": (
-        "Sentimen negatif terdeteksi. "
-        "Lakukan counter issue, tindakan korektif, dan strategi komunikasi krisis."
-    )
+    "Positive": "Pertahankan dan perkuat praktik ESG serta komunikasi publik.",
+    "Neutral": "Lakukan mitigasi risiko, peningkatan transparansi, dan monitoring isu.",
+    "Negative": "Lakukan counter issue, tindakan korektif, dan strategi komunikasi krisis."
 }
 
 # =====================================================
@@ -48,17 +47,16 @@ def load_stopwords():
 STOPWORDS = load_stopwords()
 
 # =====================================================
-# PREPROCESSING (HARUS SAMA DENGAN TRAINING)
+# PREPROCESSING
 # =====================================================
-def preprocess_text(text: str) -> str:
+def preprocess_text(text):
     text = text.lower()
     text = re.sub(r"[^a-z\s]", " ", text)
-    tokens = text.split()
-    tokens = [t for t in tokens if t not in STOPWORDS and len(t) > 2]
+    tokens = [t for t in text.split() if t not in STOPWORDS and len(t) > 2]
     return " ".join(tokens)
 
 # =====================================================
-# LOAD MODELS & TF-IDF (INI KUNCI UTAMA)
+# LOAD MODEL + TFIDF
 # =====================================================
 @st.cache_resource
 def load_artifacts():
@@ -84,14 +82,7 @@ if (
 raw_text = st.session_state.crawled_data["crawled_content"]
 
 # =====================================================
-# DISPLAY ARTICLE
-# =====================================================
-st.subheader("Artikel yang Dianalisis")
-with st.expander("Tampilkan isi artikel"):
-    st.write(raw_text)
-
-# =====================================================
-# PREPROCESS + VECTORIZE (TRANSFORM, BUKAN FIT)
+# PREPROCESS + VECTORIZE
 # =====================================================
 processed_text = preprocess_text(raw_text)
 X = vectorizer.transform([processed_text])
@@ -99,36 +90,89 @@ X = vectorizer.transform([processed_text])
 # =====================================================
 # PREDICTION
 # =====================================================
-y_env = int(model_env.predict(X)[0])
-y_soc = int(model_soc.predict(X)[0])
-y_gov = int(model_gov.predict(X)[0])
-
-label_env = SENTIMENT_MAP[y_env]
-label_soc = SENTIMENT_MAP[y_soc]
-label_gov = SENTIMENT_MAP[y_gov]
+results = {
+    "Environment": SENTIMENT_MAP[int(model_env.predict(X)[0])],
+    "Social": SENTIMENT_MAP[int(model_soc.predict(X)[0])],
+    "Governance": SENTIMENT_MAP[int(model_gov.predict(X)[0])]
+}
 
 # =====================================================
-# DISPLAY RESULT
+# DISPLAY SENTIMENT
 # =====================================================
-st.subheader("Hasil Prediksi Sentimen ESG")
+st.subheader("🔍 Hasil Prediksi Sentimen")
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Environment", label_env)
-col2.metric("Social", label_soc)
-col3.metric("Governance", label_gov)
+cols = st.columns(3)
+for col, (aspect, sentiment) in zip(cols, results.items()):
+    col.metric(aspect, SENTIMENT_BADGE[sentiment])
+
+# =====================================================
+# OVERALL ESG RISK
+# =====================================================
+st.subheader("⚠️ Overall ESG Risk Level")
+
+if "Negative" in results.values():
+    overall_risk = "🔴 HIGH RISK"
+elif "Neutral" in results.values():
+    overall_risk = "🟠 MEDIUM RISK"
+else:
+    overall_risk = "🟢 LOW RISK"
+
+st.markdown(f"### {overall_risk}")
+
+# =====================================================
+# HIGHLIGHT MOST PROBLEMATIC ASPECT
+# =====================================================
+st.subheader("🚨 Aspek Paling Bermasalah")
+
+problematic = [
+    a for a, s in results.items()
+    if s in ("Negative", "Neutral")
+]
+
+if problematic:
+    for a in problematic:
+        st.write(f"- **{a}** → {SENTIMENT_BADGE[results[a]]}")
+else:
+    st.success("Semua aspek ESG dalam kondisi positif.")
 
 # =====================================================
 # RECOMMENDATION
 # =====================================================
-st.subheader("Rekomendasi Strategis")
+st.subheader("🧭 Rekomendasi Strategis")
 
-st.markdown("**Environment**")
-st.write(RECOMMENDATION_MAP[label_env])
+for aspect, sentiment in results.items():
+    st.markdown(f"**{aspect}**")
+    st.write(RECOMMENDATION_MAP[sentiment])
 
-st.markdown("**Social**")
-st.write(RECOMMENDATION_MAP[label_soc])
+# =====================================================
+# EXPORT TO PDF
+# =====================================================
+st.subheader("📄 Export Rekomendasi")
 
-st.markdown("**Governance**")
-st.write(RECOMMENDATION_MAP[label_gov])
+def generate_pdf(results, overall_risk):
+    file_path = "/mnt/data/esg_recommendation.pdf"
+    doc = SimpleDocTemplate(file_path)
+    styles = getSampleStyleSheet()
+    story = []
 
-st.success("Analisis sentimen dan rekomendasi berhasil dibuat.")
+    story.append(Paragraph("ESG Sentiment & Recommendation Report", styles["Title"]))
+    story.append(Paragraph(f"Overall ESG Risk Level: {overall_risk}", styles["Normal"]))
+
+    for aspect, sentiment in results.items():
+        story.append(Paragraph(f"<b>{aspect}</b>: {sentiment}", styles["Normal"]))
+        story.append(Paragraph(RECOMMENDATION_MAP[sentiment], styles["Normal"]))
+
+    doc.build(story)
+    return file_path
+
+if st.button("⬇️ Download PDF"):
+    pdf_path = generate_pdf(results, overall_risk)
+    with open(pdf_path, "rb") as f:
+        st.download_button(
+            "📥 Klik untuk download",
+            f,
+            file_name="ESG_Recommendation.pdf",
+            mime="application/pdf"
+        )
+
+st.success("Analisis ESG selesai dan siap digunakan.")
