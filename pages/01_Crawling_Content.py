@@ -1,7 +1,4 @@
 import streamlit as st
-import numpy as np
-import torch
-import os
 import requests
 import re
 from bs4 import BeautifulSoup
@@ -10,23 +7,26 @@ from sentence_transformers import SentenceTransformer, util
 # =========================================================
 # PAGE CONFIG
 # =========================================================
-st.set_page_config(layout="wide", page_title="ESG Screening Tool")
+st.set_page_config(
+    page_title="ESG Content Crawling",
+    layout="wide"
+)
 
 # =========================================================
-# SESSION STATE
+# SESSION STATE INIT
 # =========================================================
 for key in ["crawled_data", "final_esg_category", "crawled_url"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
 # =========================================================
-# ESG KEYWORDS (BASE ONLY – RINGAN)
+# ESG KEYWORDS (RINGAN)
 # =========================================================
-ENV = ["iklim", "lingkungan", "emisi", "energi", "karbon", "hutan", "sampah"]
+ENV = ["iklim", "lingkungan", "emisi", "energi", "karbon", "hutan"]
 SOC = ["sosial", "masyarakat", "pendidikan", "kesehatan", "karyawan"]
 GOV = ["tata kelola", "transparansi", "audit", "korupsi", "etika"]
 
-def classify_keyword(title):
+def keyword_classification(title):
     t = title.lower()
     if any(k in t for k in ENV):
         return "Environment"
@@ -37,7 +37,7 @@ def classify_keyword(title):
     return "Non-ESG"
 
 # =========================================================
-# SEMANTIC MODEL (LITE)
+# SEMANTIC MODEL (MULTILINGUAL – STABLE)
 # =========================================================
 @st.cache_resource
 def load_semantic_model():
@@ -45,12 +45,13 @@ def load_semantic_model():
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         device="cpu"
     )
+
 semantic_model = load_semantic_model()
 
 THEMES = {
-    "Environment": ["climate change", "renewable energy"],
-    "Social": ["social responsibility", "human rights"],
-    "Governance": ["corporate governance", "anti corruption"]
+    "Environment": ["climate change", "renewable energy", "environmental impact"],
+    "Social": ["social responsibility", "public welfare", "human rights"],
+    "Governance": ["corporate governance", "transparency", "anti corruption"]
 }
 
 THEME_EMB = {
@@ -58,7 +59,7 @@ THEME_EMB = {
     for k, v in THEMES.items()
 }
 
-def classify_semantic(title):
+def semantic_classification(title):
     emb = semantic_model.encode(title, convert_to_tensor=True).unsqueeze(0)
     scores = {
         k: util.cos_sim(emb, v).max().item()
@@ -68,45 +69,111 @@ def classify_semantic(title):
     return best, scores[best]
 
 # =========================================================
-# SIMPLE CRAWLER (KOMPAS / DETIK / TRIBUN)
+# CRAWLERS PER WEBSITE
 # =========================================================
-@st.cache_data(ttl=3600)
-def crawl_generic(url):
-    r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+def crawl_kompas(url):
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "lxml")
 
     title = soup.find("h1")
-    title = title.get_text(strip=True) if title else "Tidak ada judul"
-
-    text = " ".join(p.get_text(strip=True) for p in soup.find_all("p"))
-    text = re.sub(r"\s+", " ", text).strip()
+    date = soup.find("time")
+    content = soup.find("div", class_=re.compile("read__content"))
 
     return {
-        "crawled_title": title,
-        "crawled_date": "N/A",
-        "crawled_content": text[:5000]  # HARD LIMIT
+        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
+        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
+        "crawled_content": " ".join(
+            p.get_text(strip=True) for p in content.find_all("p")
+        ) if content else ""
+    }
+
+def crawl_detik(url):
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+
+    title = soup.find("h1")
+    date = soup.find("div", class_="detail__date")
+    content = soup.find("div", class_="detail__body-text")
+
+    return {
+        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
+        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
+        "crawled_content": " ".join(
+            p.get_text(strip=True) for p in content.find_all("p")
+        ) if content else ""
+    }
+
+def crawl_tribun(url):
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+
+    title = soup.find("h1")
+    date = soup.find("time")
+    content = soup.find("div", class_="side-article txt-article")
+
+    return {
+        "crawled_title": title.get_text(strip=True) if title else "Tidak ditemukan",
+        "crawled_date": date.get_text(strip=True) if date else "Tidak ditemukan",
+        "crawled_content": " ".join(
+            p.get_text(strip=True) for p in content.find_all("p")
+        ) if content else ""
     }
 
 # =========================================================
 # UI
 # =========================================================
-st.title("ESG Screening Tool")
+st.title("Crawling Konten Artikel ESG")
+
+website = st.selectbox(
+    "Pilih Website Sumber",
+    ["Kompas.com", "Detik.com", "Tribunnews.com"]
+)
+
 url = st.text_input("Masukkan URL Artikel")
 
-if st.button("Crawl & Screening"):
-    data = crawl_generic(url)
-    st.session_state.crawled_data = data
-    st.session_state.crawled_url = url
+if st.button("Crawl Artikel"):
+    try:
+        if website == "Kompas.com":
+            data = crawl_kompas(url)
+        elif website == "Detik.com":
+            data = crawl_detik(url)
+        else:
+            data = crawl_tribun(url)
 
-    kw = classify_keyword(data["crawled_title"])
-    sem, score = classify_semantic(data["crawled_title"])
+        # HARD LIMIT ISI (CLOUD SAFE)
+        data["crawled_content"] = data["crawled_content"][:5000]
 
-    final = kw
-    if kw == "Non-ESG" and score >= 0.45:
-        final = sem
+        st.session_state.crawled_data = data
+        st.session_state.crawled_url = url
 
-    st.session_state.final_esg_category = final
+        # ESG Classification
+        kw_cat = keyword_classification(data["crawled_title"])
+        sem_cat, score = semantic_classification(data["crawled_title"])
 
-    st.markdown(f"### **Kategori ESG: {final}**")
-    st.write(data["crawled_title"])
+        final_cat = kw_cat
+        if kw_cat == "Non-ESG" and score >= 0.45:
+            final_cat = sem_cat
+
+        st.session_state.final_esg_category = final_cat
+
+        # =================================================
+        # DISPLAY
+        # =================================================
+        st.success("Artikel berhasil di-crawl")
+
+        st.markdown("### Judul Artikel")
+        st.write(data["crawled_title"])
+
+        st.markdown("### Tanggal Publikasi")
+        st.write(data["crawled_date"])
+
+        st.markdown("### Isi Artikel")
+        st.write(data["crawled_content"])
+
+        st.markdown(f"### Kategori ESG: **{final_cat}**")
+
+    except Exception as e:
+        st.error("Gagal melakukan crawling. Pastikan URL dan website sesuai.")
