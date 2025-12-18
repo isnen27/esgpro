@@ -3,52 +3,64 @@ import re
 import heapq
 import pandas as pd
 import networkx as nx
-from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import pipeline
 from pyvis.network import Network
 import tempfile
 import streamlit.components.v1 as components
-import nltk
-import os
+import torch
+import gc
 
 # =========================================================
-# SETUP
+# PAGE CONFIG
 # =========================================================
-st.set_page_config(layout="wide", page_title="ESG Analysis")
+st.set_page_config(
+    page_title="ESG Analysis",
+    layout="wide"
+)
 
-@st.cache_resource
-def setup_nltk():
-    path = os.path.join(os.getcwd(), "nltk_data")
-    os.makedirs(path, exist_ok=True)
-    nltk.download("stopwords", download_dir=path, quiet=True)
-
-setup_nltk()
+torch.set_grad_enabled(False)
 
 # =========================================================
-# TF-IDF SUMMARY (UNCHANGED)
+# STOPWORDS INDONESIA (STATIC – CLOUD SAFE)
+# =========================================================
+STOPWORDS_ID = {
+    "yang","dan","di","ke","dari","ini","itu","pada","untuk","dengan","adalah",
+    "sebagai","oleh","karena","atau","dalam","bahwa","akan","juga","dapat",
+    "tidak","telah","lebih","saat","antara","hingga","agar","namun","sehingga",
+    "tersebut","para","yakni","seperti","masih","harus","bagi","mereka","kami"
+}
+
+# =========================================================
+# TF-IDF TEXT SUMMARIZATION (LOGIKA ASLI DIPERTAHANKAN)
 # =========================================================
 def summarize(text, n=5):
-    sents = re.split(r'(?<=[.!?])\s+', text)
-    if len(sents) <= n:
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) <= n:
         return text
 
-    sw = set(stopwords.words("indonesian"))
+    def tokenizer(sentence):
+        return [
+            w for w in re.findall(r'\b\w+\b', sentence.lower())
+            if w not in STOPWORDS_ID
+        ]
 
-    def tok(s):
-        return [w for w in re.findall(r'\b\w+\b', s.lower()) if w not in sw]
+    vectorizer = TfidfVectorizer(tokenizer=tokenizer)
+    tfidf_matrix = vectorizer.fit_transform(sentences)
 
-    vec = TfidfVectorizer(tokenizer=tok)
-    mat = vec.fit_transform(sents)
+    sentence_scores = {
+        sent: tfidf_matrix[idx].sum()
+        for idx, sent in enumerate(sentences)
+    }
 
-    scores = {s: mat[i].sum() for i, s in enumerate(sents)}
-    return " ".join(heapq.nlargest(n, scores, key=scores.get))
+    top_sentences = heapq.nlargest(n, sentence_scores, key=sentence_scores.get)
+    return " ".join(top_sentences)
 
 # =========================================================
-# NER LITE
+# NER TRANSFORMER (LITE – STABLE)
 # =========================================================
 @st.cache_resource
-def load_ner():
+def load_ner_model():
     return pipeline(
         "ner",
         model="cahya/indobert-lite-ner",
@@ -56,41 +68,89 @@ def load_ner():
         device=-1
     )
 
-def ner_entities(text):
-    ner = load_ner()
-    text = text[:2000]  # HARD LIMIT
-    return [(e["word"], e["entity_group"]) for e in ner(text)]
+def extract_entities(text, max_chars=2000):
+    ner = load_ner_model()
+    text = text[:max_chars]
+
+    try:
+        entities = ner(text)
+        return [(e["word"], e["entity_group"]) for e in entities]
+    except Exception:
+        return []
 
 # =========================================================
+# KNOWLEDGE GRAPH (LIMITED – MEMORY SAFE)
+# =========================================================
+def render_knowledge_graph(entities, max_nodes=20):
+    unique_entities = list(dict.fromkeys(entities))[:max_nodes]
+
+    net = Network(
+        height="600px",
+        bgcolor="#ffffff",
+        font_color="black"
+    )
+
+    for entity, label in unique_entities:
+        net.add_node(entity, label=entity, title=label)
+
+    for i in range(len(unique_entities) - 1):
+        net.add_edge(
+            unique_entities[i][0],
+            unique_entities[i + 1][0]
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
+        net.save_graph(tmp.name)
+        components.html(
+            open(tmp.name, "r", encoding="utf-8").read(),
+            height=650,
+            scrolling=True
+        )
+
+# =========================================================
+# MAIN UI LOGIC
+# =========================================================
+st.title("ESG Content Analysis")
+
+if "crawled_data" not in st.session_state or not st.session_state.crawled_data:
+    st.info("Silakan lakukan crawling terlebih dahulu pada halaman sebelumnya.")
+    st.stop()
+
+content = st.session_state.crawled_data.get("crawled_content", "")
+
+if not content.strip():
+    st.warning("Konten artikel kosong atau tidak tersedia.")
+    st.stop()
+
+# -----------------------------
+# SUMMARY
+# -----------------------------
+st.subheader("Ringkasan Artikel (TF-IDF)")
+summary = summarize(content)
+st.write(summary)
+
+# -----------------------------
+# NER
+# -----------------------------
+st.subheader("Named Entity Recognition (NER)")
+entities = extract_entities(content)
+
+if entities:
+    df_entities = pd.DataFrame(entities, columns=["Entity", "Type"])
+    st.dataframe(df_entities, use_container_width=True)
+else:
+    st.info("Tidak ditemukan entitas atau terjadi kegagalan ekstraksi.")
+
+# -----------------------------
 # KNOWLEDGE GRAPH
-# =========================================================
-def show_graph(entities):
-    entities = list(dict.fromkeys(entities))[:20]
-
-    net = Network(height="600px", bgcolor="#fff")
-    for e, t in entities:
-        net.add_node(e, label=e, title=t)
-
-    for i in range(len(entities)-1):
-        net.add_edge(entities[i][0], entities[i+1][0])
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as f:
-        net.save_graph(f.name)
-        components.html(open(f.name).read(), height=650)
+# -----------------------------
+st.subheader("Knowledge Graph")
+if entities:
+    render_knowledge_graph(entities)
+else:
+    st.info("Knowledge Graph tidak dapat dibuat karena entitas kosong.")
 
 # =========================================================
-# MAIN
+# CLEANUP (PREVENT MEMORY LEAK)
 # =========================================================
-if st.session_state.crawled_data:
-    text = st.session_state.crawled_data["crawled_content"]
-
-    st.subheader("Ringkasan")
-    st.write(summarize(text))
-
-    st.subheader("NER")
-    ents = ner_entities(text)
-    st.dataframe(pd.DataFrame(ents, columns=["Entity", "Type"]))
-
-    st.subheader("Knowledge Graph")
-    if ents:
-        show_graph(ents)
+gc.collect()
