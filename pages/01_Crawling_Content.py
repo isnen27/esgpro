@@ -238,11 +238,3 @@ if st.button("Crawl"):
     st.write(data["crawled_content"])
 
     st.markdown(f"### Kategori ESG: **{final}**")
-# =====================================================
-# SIMPAN KE SESSION STATE (WAJIB)
-# =====================================================
-
-st.session_state["crawled_title"] = result["crawled_title"]
-st.session_state["crawled_date"] = result["crawled_date"]
-st.session_state["crawled_content"] = result["crawled_content"]
-
