@@ -9,7 +9,7 @@ joblib
 ydata-profiling
 torch
 tqdm
-sentence-transformers
+sentence-transformers>=2.2.2
 nltk
 requests
 beautifulsoup4
@@ -19,3 +19,4 @@ networkx
 pyvis
 einops
 sentencepiece
+
