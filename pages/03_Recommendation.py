@@ -100,13 +100,37 @@ def generate_pdf():
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("ESG Recommendation Report", styles["Title"]))
+    # Ambil data dari session state
+    article_data = st.session_state.crawled_data
+    title = article_data.get("crawled_title", "N/A")
+    date = article_data.get("crawled_date", "N/A")
+    content = article_data.get("crawled_content", "")
+
+    # Header Laporan
+    story.append(Paragraph("ESG Strategic Recommendation Report", styles["Title"]))
     story.append(Spacer(1, 12))
-    story.append(Paragraph(f"Overall Risk: {risk}", styles["Normal"]))
+
+    # --- BAGIAN 1: INFORMASI ARTIKEL ---
+    story.append(Paragraph("Informasi Artikel", styles["Heading2"]))
+    story.append(Paragraph(f"<b>Judul:</b> {title}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Tanggal:</b> {date}", styles["Normal"]))
+    story.append(Spacer(1, 10))
+    
+    story.append(Paragraph("Isi Artikel:", styles["Heading3"]))
+    # Menggunakan gaya 'BodyText' agar teks panjang teratur dengan baik
+    story.append(Paragraph(content[:1500] + "..." if len(content) > 1500 else content, styles["Normal"])) 
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("<hr/>", styles["Normal"])) # Garis pemisah sederhana
+
+    # --- BAGIAN 2: HASIL ANALISIS ---
+    story.append(Paragraph("Hasil Analisis & Rekomendasi", styles["Heading2"]))
+    story.append(Paragraph(f"<b>Overall Risk Level:</b> {risk}", styles["Normal"]))
+    story.append(Spacer(1, 10))
 
     for k, v in scores.items():
         story.append(Paragraph(f"{k}: {v}", styles["Heading3"]))
-        story.append(Paragraph(RECO[v], styles["Normal"]))
+        story.append(Paragraph(f"Rekomendasi: {RECO[v]}", styles["Normal"]))
+        story.append(Spacer(1, 5))
 
     doc.build(story)
     return file_path
