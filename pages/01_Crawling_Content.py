@@ -225,7 +225,7 @@ if st.button("Crawl"):
     kw = keyword_classification(data["crawled_title"])
     sem, score = semantic_classification(data["crawled_title"])
 
-    final = kw if kw != "Non-ESG" or score < 0.45 else sem
+    final = kw if kw != "Non-ESG" or score < 0.25 else sem
     st.session_state.final_esg_category = final
 
     st.markdown("### Judul")
