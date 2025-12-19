@@ -25,9 +25,9 @@ article_text = st.session_state.crawled_data.get("crawled_content", "")
 @st.cache_resource
 def load_resources():
     vectorizer = joblib.load("tfidf_vectorizer.joblib")
-    model_env = joblib.load("model_Y1_sentiment_environment_RandomForest.joblib")
-    model_soc = joblib.load("model_Y2_sentiment_social_RandomForest.joblib")
-    model_gov = joblib.load("model_Y3_sentiment_governance_RandomForest.joblib")
+    model_env = joblib.load("model_Y1_sentiment_environment_KNeighbors.joblib")
+    model_soc = joblib.load("model_Y2_sentiment_social_KNeighbors.joblib")
+    model_gov = joblib.load("model_Y3_sentiment_governance_KNeighbors.joblib")
     return vectorizer, model_env, model_soc, model_gov
 
 def load_stopwords():
